@@ -1219,9 +1219,9 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
 
         // --- Constants for PDF layout (tek A4 yatay sayfaya sığacak, sayfayı dolduran geniş yerleşim) ---
         const spanDays = (timeDomain[1].getTime() - timeDomain[0].getTime()) / 86400000;
-        const PDF_SIDEBAR_WIDTH = 430; // WBS + Görev + Başl./Bitiş + Süre
+        const PDF_SIDEBAR_WIDTH = 470; // WBS + Görev + Başl./Bitiş + Süre
         const PDF_GANTT_WIDTH = Math.min(1500, Math.max(700, Math.round(spanDays * 1.6)));
-        const PDF_ROW_HEIGHT = 16;
+        const PDF_ROW_HEIGHT = 19;
         const PDF_FONT_SIZE = '9px';
     
         // --- Create a temporary container for the printable content ---
@@ -1290,7 +1290,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
     
         const taskListHeader = document.createElement('div');
         taskListHeader.style.display = 'grid';
-        taskListHeader.style.gridTemplateColumns = '50px 1fr 65px 65px 50px 60px'; // Added WBS column
+        taskListHeader.style.gridTemplateColumns = '44px 1fr 58px 58px 42px 52px'; // Added WBS column
         taskListHeader.style.fontWeight = 'bold';
         taskListHeader.style.fontSize = '11px';
         taskListHeader.style.padding = '5px';
@@ -1309,7 +1309,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         visibleTasks.forEach((task, index) => {
             const row = document.createElement('div');
             row.style.display = 'grid';
-            row.style.gridTemplateColumns = '50px 1fr 65px 65px 50px 60px'; // Added WBS column
+            row.style.gridTemplateColumns = '44px 1fr 58px 58px 42px 52px'; // Added WBS column
             row.style.height = `${PDF_ROW_HEIGHT}px`;
             row.style.alignItems = 'center';
             row.style.padding = '0 5px';
@@ -1320,7 +1320,9 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             const endDate = task.end.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit' });
             const duration = calculateDuration(task.start, task.end, calendarSettings);
     
-            const cellStyle = `line-height: ${PDF_ROW_HEIGHT}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`;
+            // line-height satır yüksekliğinden küçük tutulur (glyph üstleri kırpılmaz);
+            // dikey ortalama satırın align-items:center'ı ile yapılır.
+            const cellStyle = `line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`;
     
             row.innerHTML = `
                 <div style="${cellStyle}">${task.wbs}</div>
