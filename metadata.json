@@ -1,0 +1,6 @@
+{
+  "name": "Interactive Gantt Chart1",
+  "description": "A full-featured, Microsoft Project-style Gantt Chart web application for project planning, task tracking, and dependency management. Built with React, TypeScript, and D3.js for rich, interactive visualizations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

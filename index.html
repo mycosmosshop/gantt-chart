@@ -1,0 +1,53 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proje Yönetimi (Gantt)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://mycosmosshop.github.io/erp-portal/erp-guard.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+      body {
+        overscroll-behavior: none;
+      }
+      .gantt-chart-container::-webkit-scrollbar {
+        height: 10px;
+        background-color: #f5f5f5;
+      }
+      .gantt-chart-container::-webkit-scrollbar-thumb {
+        background-color: #a0aec0;
+        border-radius: 5px;
+      }
+      .non-working-day-pattern {
+        background-image: repeating-linear-gradient(
+          45deg,
+          rgba(0, 0, 0, 0.04),
+          rgba(0, 0, 0, 0.04) 10px,
+          transparent 10px,
+          transparent 20px
+        );
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "uuid": "https://aistudiocdn.com/uuid@^13.0.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
