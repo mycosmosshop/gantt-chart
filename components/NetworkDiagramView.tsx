@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useMemo } from 'react';
-import { ProcessedTask, CalendarSettings, DependencyType } from '../types';
+import React, { useEffect, useRef } from 'react';
+import { ProcessedTask, CalendarSettings } from '../types';
 import { calculateDuration } from '../services/ganttService';
 
 // d3 type declaration
@@ -16,212 +16,185 @@ interface DiagramNode extends ProcessedTask {
     y: number;
     width: number;
     height: number;
+    col: number;
+    row: number;
 }
 
 const NetworkDiagramView: React.FC<NetworkDiagramViewProps> = ({ tasks, criticalPath, calendarSettings }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    const formatDate = (date: Date): string => {
-        if (!date) return '';
-        return date.toLocaleDateString('tr-TR');
-    };
+    const formatDate = (date: Date): string =>
+        date ? date.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
 
     useEffect(() => {
         if (!svgRef.current || !containerRef.current || tasks.length === 0) {
             d3.select(svgRef.current).selectAll('*').remove();
             return;
         }
-        
+
         const svg = d3.select(svgRef.current);
         svg.selectAll('*').remove();
 
-        const nodeWidth = 220;
-        const nodeHeight = 110;
-        const horizontalPadding = 60;
-        const verticalPadding = 60;
+        // MS Project tarzı kutu boyutları + boşluklar
+        const nodeWidth = 200;
+        const nodeHeight = 84;
+        const hGap = 64;   // sütunlar arası (bağımlılık yönü, sol->sağ)
+        const vGap = 26;   // satırlar arası
+        const padX = 40;
+        const padY = 40;
 
-        // 1. Build tree structure for easier traversal
-        const taskMap = new Map<number, ProcessedTask>(tasks.map(t => [t.id, t]));
-        const childrenMap = new Map<number | null, ProcessedTask[]>();
-        tasks.forEach(task => {
-            if (!childrenMap.has(task.parentId)) {
-                childrenMap.set(task.parentId, []);
-            }
-            childrenMap.get(task.parentId)!.push(task);
+        // PERT yalnız gerçek (yaprak) görevleri gösterir — özet/çatı görevleri hariç
+        const leaves = tasks.filter(t => !t.isSummary);
+        if (leaves.length === 0) { svg.attr('width', 0).attr('height', 0); return; }
+
+        const leafIds = new Set(leaves.map(t => t.id));
+        const orderIndex = new Map<number, number>(leaves.map((t, i) => [t.id, i]));
+
+        // Bağımlılık haritaları (yalnız yaprak->yaprak)
+        const preds = new Map<number, number[]>();
+        leaves.forEach(t => {
+            preds.set(t.id, (t.dependencies || [])
+                .map(d => d.predecessorId)
+                .filter(pid => leafIds.has(pid)));
         });
-        // Sort children according to their original order in the tasks array
-        childrenMap.forEach(children => children.sort((a,b) => tasks.indexOf(a) - tasks.indexOf(b)));
-        
-        const rootTasks = childrenMap.get(null) || [];
-        const diagramNodesMap = new Map<number, DiagramNode>();
 
-        // 2. Recursive function to calculate horizontal layout
-        const layoutNodes = (nodeIds: number[], level: number, parentX: number = 0): number => {
-            if (nodeIds.length === 0) return 0;
-
-            // First pass: Recursively calculate subtree widths for all children
-            const childSubtreeWidths = nodeIds.map(id => {
-                const children = childrenMap.get(id) || [];
-                return layoutNodes(children.map(c => c.id), level + 1, 0); // Pass 0 for parentX, we only need the width for now
-            });
-
-            // Calculate total width required for this block of siblings
-            let totalBlockWidth = 0;
-            nodeIds.forEach((id, index) => {
-                const width = nodeWidth;
-                totalBlockWidth += Math.max(width, childSubtreeWidths[index]) + (index > 0 ? horizontalPadding : 0);
-            });
-            
-            // Second pass: Position nodes and their subtrees, centered under the parent
-            let currentX = parentX - totalBlockWidth / 2;
-
-            nodeIds.forEach((id, index) => {
-                const node = taskMap.get(id)!;
-                const children = childrenMap.get(id) || [];
-                const width = nodeWidth;
-                const height = nodeHeight;
-                
-                const subtreeWidth = childSubtreeWidths[index];
-                const nodeBlockWidth = Math.max(width, subtreeWidth);
-                const nodeCenterX = currentX + nodeBlockWidth / 2;
-
-                diagramNodesMap.set(id, {
-                    ...node,
-                    x: nodeCenterX - width / 2,
-                    y: verticalPadding + level * (nodeHeight + verticalPadding),
-                    width,
-                    height
-                });
-
-                if (children.length > 0) {
-                    layoutNodes(children.map(c => c.id), level + 1, nodeCenterX);
-                }
-                
-                currentX += nodeBlockWidth + horizontalPadding;
-            });
-
-            return totalBlockWidth;
+        // 1) Sütun (kolon) = başlangıçtan en uzun bağımlılık yolu (longest-path layering)
+        const colOf = new Map<number, number>();
+        const computeCol = (id: number, stack: Set<number>): number => {
+            if (colOf.has(id)) return colOf.get(id)!;
+            if (stack.has(id)) return 0; // döngü emniyeti
+            stack.add(id);
+            const ps = preds.get(id) || [];
+            const c = ps.length === 0 ? 0 : Math.max(...ps.map(p => computeCol(p, stack))) + 1;
+            stack.delete(id);
+            colOf.set(id, c);
+            return c;
         };
+        leaves.forEach(t => computeCol(t.id, new Set()));
 
-        // Initial layout pass
-        layoutNodes(rootTasks.map(t => t.id), 0, (containerRef.current.clientWidth / 2));
+        const colCount = Math.max(...leaves.map(t => colOf.get(t.id)!)) + 1;
+        const colNodes: number[][] = Array.from({ length: colCount }, () => []);
+        leaves.forEach(t => colNodes[colOf.get(t.id)!].push(t.id));
 
-        // 3. Render
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        diagramNodesMap.forEach(node => {
-            minX = Math.min(minX, node.x);
-            maxX = Math.max(maxX, node.x + node.width);
-            minY = Math.min(minY, node.y);
-            maxY = Math.max(maxY, node.y + node.height);
+        // 2) Sütun içi satır sırası = öncüllerin ortalama satırı (barycenter) ile çapraz kesişimi azalt
+        const rowOf = new Map<number, number>();
+        colNodes[0].sort((a, b) => orderIndex.get(a)! - orderIndex.get(b)!);
+        colNodes[0].forEach((id, i) => rowOf.set(id, i));
+        for (let c = 1; c < colCount; c++) {
+            const bary = (id: number): number => {
+                const ps = (preds.get(id) || []).filter(p => rowOf.has(p));
+                if (ps.length === 0) return orderIndex.get(id)! / 1000;
+                return ps.reduce((s, p) => s + rowOf.get(p)!, 0) / ps.length;
+            };
+            colNodes[c].sort((a, b) => bary(a) - bary(b) || (orderIndex.get(a)! - orderIndex.get(b)!));
+            colNodes[c].forEach((id, i) => rowOf.set(id, i));
+        }
+
+        // 3) Koordinatlar
+        const taskMap = new Map<number, ProcessedTask>(leaves.map(t => [t.id, t]));
+        const nodes = new Map<number, DiagramNode>();
+        leaves.forEach(t => {
+            const col = colOf.get(t.id)!;
+            const row = rowOf.get(t.id)!;
+            nodes.set(t.id, {
+                ...t,
+                col, row,
+                x: padX + col * (nodeWidth + hGap),
+                y: padY + row * (nodeHeight + vGap),
+                width: nodeWidth, height: nodeHeight,
+            });
         });
 
-        const totalWidth = maxX - minX + horizontalPadding * 2;
-        const totalHeight = maxY + verticalPadding;
-        
-        svg.attr('width', Math.max(totalWidth, containerRef.current.clientWidth))
-           .attr('height', totalHeight);
-        
-        const g = svg.append('g').attr('transform', `translate(${-minX + horizontalPadding}, 0)`);
+        const maxRows = Math.max(...colNodes.map(c => c.length));
+        const totalWidth = padX * 2 + colCount * nodeWidth + (colCount - 1) * hGap;
+        const totalHeight = padY * 2 + maxRows * nodeHeight + (maxRows - 1) * vGap;
 
-        const zoom = d3.zoom().scaleExtent([0.3, 3]).on('zoom', (event: any) => {
-             const { transform } = event;
-             const newTransform = transform.translate(-minX + horizontalPadding, 0);
-             g.attr('transform', newTransform);
+        svg.attr('width', Math.max(totalWidth, containerRef.current.clientWidth))
+           .attr('height', Math.max(totalHeight, containerRef.current.clientHeight));
+
+        const g = svg.append('g');
+
+        // Zoom / pan
+        const zoom = d3.zoom().scaleExtent([0.2, 2.5]).on('zoom', (event: any) => {
+            g.attr('transform', event.transform);
         });
         svg.call(zoom);
 
+        // Ok uçları
         const defs = g.append('defs');
-        const createMarker = (id: string, color: string) => {
-            defs.append('marker').attr('id', id).attr('viewBox', '0 -5 10 10').attr('refX', 5).attr('refY', 0)
-                .attr('orient', 'auto').attr('markerWidth', 5).attr('markerHeight', 5)
+        const marker = (id: string, color: string) =>
+            defs.append('marker').attr('id', id).attr('viewBox', '0 -5 10 10').attr('refX', 9).attr('refY', 0)
+                .attr('orient', 'auto').attr('markerWidth', 6).attr('markerHeight', 6)
                 .append('svg:path').attr('d', 'M0,-5L10,0L0,5').attr('fill', color);
+        marker('net-arrow', '#94a3b8');
+        marker('net-arrow-crit', '#ef4444');
+
+        const colorFor = (d: ProcessedTask) => {
+            if (criticalPath.has(d.id)) return '#ef4444';
+            if (d.isMilestone) return '#7c3aed';
+            if (d.status === 'Completed') return '#16a34a';
+            if (d.status === 'In Progress') return '#2563eb';
+            return '#64748b';
         };
-        createMarker('arrow-default', '#6b7280');
-        createMarker('arrow-critical', '#ef4444');
 
-        // Render links
-        const links = g.append('g').attr('fill', 'none').attr('stroke-opacity', 0.9);
-        tasks.forEach(task => {
-            task.dependencies.forEach(dep => {
-                const sourceNode = diagramNodesMap.get(dep.predecessorId);
-                const targetNode = diagramNodesMap.get(task.id);
-                if (!sourceNode || !targetNode) return;
-
-                const isCritical = criticalPath.has(task.id) && criticalPath.has(dep.predecessorId);
-                
-                const sx = sourceNode.x + sourceNode.width / 2;
-                const sy = sourceNode.y + sourceNode.height;
-                const tx = targetNode.x + targetNode.width / 2;
-                const ty = targetNode.y;
-
-                const midY = sy + verticalPadding / 2;
-
-                links.append('path')
-                    .attr('d', `M ${sx},${sy} V ${midY} H ${tx} V ${ty}`)
-                    .attr('stroke', isCritical ? '#ef4444' : '#6b7280')
-                    .attr('stroke-width', isCritical ? 2.5 : 1.5)
-                    .attr('marker-end', isCritical ? 'url(#arrow-critical)' : 'url(#arrow-default)');
+        // 4) Bağlantılar (sol->sağ ortogonal)
+        const linkG = g.append('g').attr('fill', 'none');
+        leaves.forEach(t => {
+            const target = nodes.get(t.id);
+            (t.dependencies || []).forEach(dep => {
+                const source = nodes.get(dep.predecessorId);
+                if (!source || !target) return;
+                const isCrit = criticalPath.has(t.id) && criticalPath.has(dep.predecessorId);
+                const sx = source.x + source.width, sy = source.y + source.height / 2;
+                const tx = target.x, ty = target.y + target.height / 2;
+                const midX = (target.col > source.col)
+                    ? sx + Math.max(hGap / 2, (tx - sx) / 2)
+                    : sx + hGap / 2;
+                const d = `M ${sx},${sy} H ${midX} V ${ty} H ${tx}`;
+                linkG.append('path')
+                    .attr('d', d)
+                    .attr('stroke', isCrit ? '#ef4444' : '#94a3b8')
+                    .attr('stroke-width', isCrit ? 2.5 : 1.4)
+                    .attr('marker-end', isCrit ? 'url(#net-arrow-crit)' : 'url(#net-arrow)');
             });
         });
 
-        // Render nodes
-        const nodes = g.append('g').selectAll('g')
-            .data(Array.from(diagramNodesMap.values()))
+        // 5) Düğümler (MS Project tarzı kart)
+        const nodeG = g.append('g').selectAll('g')
+            .data(Array.from(nodes.values()))
             .join('g')
             .attr('transform', d => `translate(${d.x}, ${d.y})`);
 
-        nodes.append('path')
-            .attr('d', d => {
-                const w = d.width;
-                const h = d.height;
-                if (d.isSummary) { // Parallelogram for summary tasks
-                    const skew = 20;
-                    return `M ${skew},0 L ${w},0 L ${w - skew},${h} L 0,${h} Z`;
-                }
-                if (d.isMilestone) { // Diamond for milestones
-                    return `M ${w / 2},0 L ${w},${h / 2} L ${w / 2},${h} L 0,${h / 2} Z`;
-                }
-                // Rectangle for regular tasks
-                return `M 0,0 H ${w} V ${h} H 0 Z`;
-            })
-            .attr('fill', d => {
-                 if (d.status === 'Completed') return '#dcfce7'; 
-                 if (d.status === 'In Progress') return '#dbeafe';
-                 return '#f1f5f9';
-            })
-            .attr('stroke', d => criticalPath.has(d.id) ? '#ef4444' : '#94a3b8')
-            .attr('stroke-width', d => criticalPath.has(d.id) ? 2.5 : 1.5);
-            
-        nodes.append('foreignObject')
-            .attr('x', 0)
-            .attr('y', 0)
+        nodeG.append('foreignObject')
             .attr('width', d => d.width)
             .attr('height', d => d.height)
             .append('xhtml:div')
-            .attr('class', d => {
-                let baseClasses = 'w-full h-full flex flex-col justify-center items-center text-center text-xs leading-tight ';
-                if (d.isSummary) {
-                    baseClasses += 'px-8'; // Horizontal padding for parallelogram
-                } else if (d.isMilestone) {
-                    baseClasses += 'px-4'; // Padding for diamond
-                } else {
-                    baseClasses += 'p-2'; // Default padding for rectangle
-                }
-                return baseClasses;
-            })
+            .style('box-sizing', 'border-box')
+            .style('width', '100%')
+            .style('height', '100%')
             .html(d => {
-                const duration = calculateDuration(d.start, d.end, calendarSettings);
-                const taskName = `<div class="font-bold text-gray-800 text-sm leading-snug" style="word-break: break-word;" title="${d.name}">${d.wbs} ${d.name}</div>`;
-                
-                const dates = `<div class="text-gray-600 mt-1.5">
-                    <div>${formatDate(d.start)} - ${formatDate(d.end)}</div>
-                    <div>Duration: ${duration}d</div>
-                </div>`;
-                
-                return taskName + dates;
+                const accent = colorFor(d);
+                const isCrit = criticalPath.has(d.id);
+                const dur = calculateDuration(d.start, d.end, calendarSettings);
+                const ms = d.isMilestone ? '◆ ' : '';
+                return `
+                  <div style="box-sizing:border-box;width:100%;height:100%;border:${isCrit ? 2.5 : 1.5}px solid ${accent};border-radius:7px;background:#fff;overflow:hidden;font-family:sans-serif;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(0,0,0,0.12);">
+                    <div style="background:${accent};color:#fff;padding:4px 7px;font-size:11px;font-weight:700;line-height:1.15;height:40px;overflow:hidden;display:flex;align-items:center;" title="${d.wbs} ${d.name}">
+                      <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${ms}${d.wbs} ${d.name}</span>
+                    </div>
+                    <div style="flex:1;padding:4px 7px;font-size:10px;color:#334155;display:grid;grid-template-columns:auto auto;align-content:center;gap:2px 10px;">
+                      <div><span style="color:#94a3b8;">Baş:</span> ${formatDate(d.start)}</div>
+                      <div><span style="color:#94a3b8;">Süre:</span> ${dur}g</div>
+                      <div><span style="color:#94a3b8;">Bit:</span> ${formatDate(d.end)}</div>
+                      <div><span style="color:#94a3b8;">İlerleme:</span> %${d.progress}</div>
+                    </div>
+                  </div>`;
             });
-            
+
+        // Açılışta içeriği görünür konuma getir (hafif kenar boşluğu)
+        svg.call(zoom.transform, d3.zoomIdentity.translate(8, 8).scale(1));
+
     }, [tasks, criticalPath, calendarSettings]);
 
     return (
@@ -229,7 +202,7 @@ const NetworkDiagramView: React.FC<NetworkDiagramViewProps> = ({ tasks, critical
             <svg ref={svgRef}></svg>
             {tasks.length === 0 && (
                 <div className="flex items-center justify-center h-full text-gray-600">
-                    No tasks to display in Network Diagram View.
+                    Şebeke diyagramında gösterilecek görev yok.
                 </div>
             )}
         </div>
