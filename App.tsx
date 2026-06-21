@@ -1202,11 +1202,27 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             return;
         }
     
-        // --- Constants for PDF layout ---
-        const PDF_SIDEBAR_WIDTH = 500; // Adjusted for WBS
-        const PDF_GANTT_WIDTH = 600;
-        const PDF_ROW_HEIGHT = 25;
-        const PDF_FONT_SIZE = '10px';
+        // Letterhead (antet) logosu — base64; yüklenemezse metin amblemine düşülür
+        const loadLogo = async (): Promise<string | null> => {
+            try {
+                const res = await fetch(`${import.meta.env.BASE_URL}SanifoamLogo-Transparent.png`);
+                const blob = await res.blob();
+                return await new Promise<string | null>((resolve) => {
+                    const fr = new FileReader();
+                    fr.onload = () => resolve(fr.result as string);
+                    fr.onerror = () => resolve(null);
+                    fr.readAsDataURL(blob);
+                });
+            } catch { return null; }
+        };
+        const logoData = await loadLogo();
+
+        // --- Constants for PDF layout (tek A4 yatay sayfaya sığacak, sayfayı dolduran geniş yerleşim) ---
+        const spanDays = (timeDomain[1].getTime() - timeDomain[0].getTime()) / 86400000;
+        const PDF_SIDEBAR_WIDTH = 430; // WBS + Görev + Başl./Bitiş + Süre
+        const PDF_GANTT_WIDTH = Math.min(1500, Math.max(700, Math.round(spanDays * 1.6)));
+        const PDF_ROW_HEIGHT = 16;
+        const PDF_FONT_SIZE = '9px';
     
         // --- Create a temporary container for the printable content ---
         const printContainer = document.createElement('div');
@@ -1223,57 +1239,41 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         const { charter } = activeProject;
 
         const printHeader = document.createElement('div');
-        printHeader.style.padding = '20px 30px';
         printHeader.style.width = `${totalContentWidth}px`;
         printHeader.style.boxSizing = 'border-box';
         printHeader.style.backgroundColor = 'white';
-        printHeader.style.borderBottom = '2px solid #e5e7eb';
-        printHeader.style.marginBottom = '10px';
+        printHeader.style.marginBottom = '8px';
         printHeader.style.color = '#374151';
+        printHeader.style.fontFamily = 'sans-serif';
 
-        const infoBoxStyle = "padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; background-color: #f9fafb; min-height: 38px; display: flex; align-items: center;";
-        const labelStyle = "font-size: 11px; font-weight: 600; color: #6b7280; margin-bottom: 4px;";
+        const today = new Date().toLocaleDateString('tr-TR');
+        const sd = charter.startDate ? new Date(charter.startDate + 'T00:00:00').toLocaleDateString('tr-TR') : '-';
+        const ed = charter.endDate ? new Date(charter.endDate + 'T00:00:00').toLocaleDateString('tr-TR') : '-';
+        const cell = (label: string, val?: string) =>
+            `<td style="border:1px solid #cbd5e1;padding:4px 8px;font-size:10px;background:#f8fafc;color:#64748b;font-weight:600;white-space:nowrap;">${label}</td>` +
+            `<td style="border:1px solid #cbd5e1;padding:4px 8px;font-size:11px;color:#0f172a;font-weight:600;">${val || '-'}</td>`;
 
         printHeader.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-                <h1 style="font-size: 28px; font-weight: bold; color: #111827;">Gantt Chart Raporu</h1>
-                <p style="font-size: 12px; color: #6b7280;">Rapor Tarihi: ${new Date().toLocaleDateString('tr-TR')}</p>
+          <div style="display:flex;align-items:stretch;border:2px solid #1e293b;border-radius:6px;overflow:hidden;">
+            <div style="width:175px;display:flex;align-items:center;justify-content:center;padding:10px 14px;border-right:1px solid #cbd5e1;">
+              ${logoData
+                ? `<img src="${logoData}" style="max-width:145px;max-height:56px;object-fit:contain;" />`
+                : `<div style="font-size:22px;font-weight:800;color:#1e293b;letter-spacing:1px;">SANIFOAM</div>`}
             </div>
-            <h2 style="font-size: 18px; font-weight: bold; color: #1f2937; margin-bottom: 16px;">Proje Bilgileri</h2>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; font-size: 13px;">
-                <div style="display: flex; flex-direction: column; gap: 16px;">
-                    <div>
-                        <div style="${labelStyle}">Proje Başlığı</div>
-                        <div style="${infoBoxStyle}">${charter.projectTitle || '-'}</div>
-                    </div>
-                    <div>
-                        <div style="${labelStyle}">Proje Sponsoru</div>
-                        <div style="${infoBoxStyle}">${charter.sponsor || '-'}</div>
-                    </div>
-                    <div>
-                        <div style="${labelStyle}">Müşteri</div>
-                        <div style="${infoBoxStyle}">${charter.customer || '-'}</div>
-                    </div>
-                    <div>
-                        <div style="${labelStyle}">Bitiş Tarihi</div>
-                        <div style="${infoBoxStyle}">${charter.endDate ? new Date(charter.endDate + 'T00:00:00').toLocaleDateString('tr-TR') : '-'}</div>
-                    </div>
-                </div>
-                <div style="display: flex; flex-direction: column; gap: 16px;">
-                     <div>
-                        <div style="${labelStyle}">Proje Kodu</div>
-                        <div style="${infoBoxStyle}">${charter.projectCode || '-'}</div>
-                    </div>
-                    <div>
-                        <div style="${labelStyle}">Proje Yöneticisi</div>
-                        <div style="${infoBoxStyle}">${charter.projectManager || '-'}</div>
-                    </div>
-                    <div>
-                        <div style="${labelStyle}">Başlangıç Tarihi</div>
-                        <div style="${infoBoxStyle}">${charter.startDate ? new Date(charter.startDate + 'T00:00:00').toLocaleDateString('tr-TR') : '-'}</div>
-                    </div>
-                </div>
+            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;">
+              <div style="font-size:18px;font-weight:800;color:#0f172a;letter-spacing:.5px;">PROJE PLANI — GANTT ÇİZELGESİ</div>
+              <div style="font-size:13px;font-weight:600;color:#334155;margin-top:3px;">${charter.projectTitle || ''}</div>
             </div>
+            <div style="width:205px;border-left:1px solid #cbd5e1;font-size:10px;color:#334155;">
+              <div style="display:flex;border-bottom:1px solid #cbd5e1;"><div style="flex:1;padding:3px 8px;background:#f1f5f9;font-weight:600;">Doküman No</div><div style="flex:1;padding:3px 8px;">PL130</div></div>
+              <div style="display:flex;border-bottom:1px solid #cbd5e1;"><div style="flex:1;padding:3px 8px;background:#f1f5f9;font-weight:600;">Rev. No</div><div style="flex:1;padding:3px 8px;">01</div></div>
+              <div style="display:flex;"><div style="flex:1;padding:3px 8px;background:#f1f5f9;font-weight:600;">Rapor Tarihi</div><div style="flex:1;padding:3px 8px;">${today}</div></div>
+            </div>
+          </div>
+          <table style="border-collapse:collapse;width:100%;margin-top:6px;table-layout:fixed;">
+            <tr>${cell('Proje Kodu', charter.projectCode)}${cell('Müşteri', charter.customer)}${cell('Başlangıç', sd)}</tr>
+            <tr>${cell('Proje Yöneticisi', charter.projectManager)}${cell('Sponsor', charter.sponsor)}${cell('Bitiş', ed)}</tr>
+          </table>
         `;
     
         // --- Body Container ---
@@ -1353,9 +1353,24 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             .attr('markerWidth', 5).attr('markerHeight', 5)
             .append('svg:path').attr('d', 'M 0,-5 L 10 ,0 L 0,5').attr('fill', '#0ea5e9');
     
-        const axisTop = d3.axisTop(pdfTimeScale).ticks(d3.timeWeek.every(1)).tickFormat(d3.timeFormat('%b %d'));
-        pdfSvg.append('g').attr('transform', `translate(0, 29)`).call(axisTop).selectAll('text').attr('font-size', '10px');
-        pdfSvg.selectAll('path.domain, .tick line').attr('stroke', '#d1d5db');
+        // Proje uzunluğuna göre uyarlanan zaman ekseni (uzun projede aylık)
+        let tickInterval: any, tickFmt: string;
+        if (spanDays > 365) { tickInterval = d3.timeMonth.every(2); tickFmt = "%b '%y"; }
+        else if (spanDays > 120) { tickInterval = d3.timeMonth.every(1); tickFmt = "%b '%y"; }
+        else if (spanDays > 45) { tickInterval = d3.timeWeek.every(2); tickFmt = '%d %b'; }
+        else { tickInterval = d3.timeWeek.every(1); tickFmt = '%d %b'; }
+
+        // Hafif dikey ızgara çizgileri — uzun çubukları tarih ekseniyle hizalı okumayı kolaylaştırır
+        const gridG = pdfSvg.append('g');
+        pdfTimeScale.ticks(tickInterval).forEach((t: Date) => {
+            const gx = pdfTimeScale(t);
+            gridG.append('line').attr('x1', gx).attr('x2', gx).attr('y1', 29).attr('y2', ganttHeight)
+                .attr('stroke', '#eef2f7').attr('stroke-width', 1);
+        });
+
+        const axisTop = d3.axisTop(pdfTimeScale).ticks(tickInterval).tickFormat(d3.timeFormat(tickFmt));
+        pdfSvg.append('g').attr('transform', `translate(0, 29)`).call(axisTop).selectAll('text').attr('font-size', '9px').attr('fill', '#334155');
+        pdfSvg.selectAll('path.domain, .tick line').attr('stroke', '#cbd5e1');
     
         const pdfBars = pdfSvg.append('g').selectAll('g').data(visibleTasks).enter().append('g')
             .attr('transform', (d, i) => `translate(0, ${30 + i * PDF_ROW_HEIGHT})`);
@@ -1411,10 +1426,10 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                  group.append('text')
                     .text(d.name)
                     .attr('x', x + 12)
-                    .attr('y', PDF_ROW_HEIGHT / 2 - 8)
+                    .attr('y', PDF_ROW_HEIGHT / 2 - 5)
                     .attr('fill', '#1f2937')
-                    .attr('font-size', '10px')
-                    .attr('font-weight', '500');
+                    .attr('font-size', '8px')
+                    .attr('font-weight', '600');
 
             } else { // Normal task
                 group.append('rect').attr('x', x).attr('y', y).attr('width', width).attr('height', barHeight).attr('rx', 3).attr('ry', 3).attr('fill', finalColor);
