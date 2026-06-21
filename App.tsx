@@ -1251,7 +1251,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         const spanDays = (timeDomain[1].getTime() - timeDomain[0].getTime()) / 86400000;
         const PDF_SIDEBAR_WIDTH = 470; // WBS + Görev + Başl./Bitiş + Süre
         const PDF_GANTT_WIDTH = Math.min(1500, Math.max(700, Math.round(spanDays * 1.6)));
-        const PDF_ROW_HEIGHT = 19;
+        const PDF_ROW_HEIGHT = 20;
         const PDF_FONT_SIZE = '9px';
     
         // --- Create a temporary container for the printable content ---
@@ -1350,9 +1350,9 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             const endDate = task.end.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit' });
             const duration = calculateDuration(task.start, task.end, calendarSettings);
     
-            // line-height satır yüksekliğinden küçük tutulur (glyph üstleri kırpılmaz);
-            // dikey ortalama satırın align-items:center'ı ile yapılır.
-            const cellStyle = `line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`;
+            // line-height = satır yüksekliği: tek satır metin, tam yükseklikteki satır
+            // kutusunda dikey ortalanır → html2canvas'ta üst/alt kırpılma olmaz.
+            const cellStyle = `line-height: ${PDF_ROW_HEIGHT}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`;
     
             row.innerHTML = `
                 <div style="${cellStyle}">${task.wbs}</div>
