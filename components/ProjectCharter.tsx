@@ -224,6 +224,7 @@ const ProjectCharter: React.FC<ProjectCharterProps> = ({ charterData, onSave, ta
 
     // We make a clone of the node to avoid issues with scroll containers and rendering artifacts.
     const printContainer = content.cloneNode(true) as HTMLElement;
+    printContainer.id = 'charter-print-clone';
 
     // The clone needs to be in the DOM to be rendered, but we can hide it.
     printContainer.style.position = 'absolute';
@@ -248,6 +249,32 @@ const ProjectCharter: React.FC<ProjectCharterProps> = ({ charterData, onSave, ta
             // These options help html2canvas correctly capture the full dimensions of the cloned element.
             windowWidth: printContainer.scrollWidth,
             windowHeight: printContainer.scrollHeight,
+            // html2canvas, <input>/<textarea>/<select> metnini dikey kaydırıp altını keser.
+            // Yakalamadan önce bu alanları aynı görünümlü metin <div>'lerine çevir → kırpma olmaz.
+            onclone: (clonedDoc: Document) => {
+                const root = clonedDoc.getElementById('charter-print-clone');
+                if (!root) return;
+                root.querySelectorAll('input, textarea, select').forEach((el) => {
+                    const tag = el.tagName.toLowerCase();
+                    let val = '';
+                    if (tag === 'select') {
+                        const sel = el as HTMLSelectElement;
+                        val = sel.options[sel.selectedIndex]?.text || '';
+                    } else {
+                        const inp = el as HTMLInputElement;
+                        val = inp.value || inp.getAttribute('placeholder') || '';
+                    }
+                    const div = clonedDoc.createElement('div');
+                    div.textContent = val;
+                    div.className = (el as HTMLElement).className;
+                    div.style.boxSizing = 'border-box';
+                    div.style.whiteSpace = tag === 'textarea' ? 'pre-wrap' : 'nowrap';
+                    div.style.overflow = 'hidden';
+                    div.style.lineHeight = '1.4';
+                    if (tag === 'textarea') div.style.minHeight = '80px';
+                    el.parentNode?.replaceChild(div, el);
+                });
+            },
         });
 
         const imgData = canvas.toDataURL('image/png');
