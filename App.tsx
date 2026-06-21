@@ -1612,7 +1612,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                             costAllocationData={costAllocationData}
                         />;
             case MainView.Network:
-                return <NetworkDiagramView tasks={processedTasks} criticalPath={showCriticalPath ? criticalPath : new Set()} calendarSettings={calendarSettings} />;
+                return <NetworkDiagramView tasks={processedTasks} criticalPath={showCriticalPath ? criticalPath : new Set()} calendarSettings={calendarSettings} charter={projectCharter} />;
             case MainView.Timeline:
                 return <TimelineView 
                             tasks={processedTasks} 
