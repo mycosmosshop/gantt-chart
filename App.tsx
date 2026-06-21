@@ -375,6 +375,36 @@ const App: React.FC = () => {
         });
     };
 
+    // Gantt alanında SAĞ TIK basılı tut-sürükle ile kaydırma (pan)
+    const handleGanttMouseDown = useCallback((e: React.MouseEvent) => {
+        if (e.button !== 2) return; // yalnız sağ tık
+        const el = mainRef.current;
+        if (!el) return;
+        e.preventDefault();
+        const startX = e.clientX, startY = e.clientY;
+        const startLeft = el.scrollLeft, startTop = el.scrollTop;
+        const prevCursor = el.style.cursor;
+        el.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+        const move = (ev: MouseEvent) => {
+            el.scrollLeft = startLeft - (ev.clientX - startX);
+            el.scrollTop = startTop - (ev.clientY - startY);
+        };
+        const up = () => {
+            el.style.cursor = prevCursor;
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    }, []);
+
+    // Sağ tık pan'ı için bağlam (context) menüsünü gantt alanında engelle
+    const handleGanttContextMenu = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+    }, []);
+
     const createSplitterMouseDownHandler = (
         currentWidth: number, 
         setWidth: (width: number) => void,
@@ -1663,9 +1693,11 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                             onMouseDown={handleMouseDownOnGanttSplitter}
                             className="w-1.5 flex-shrink-0 cursor-col-resize bg-gray-300 hover:bg-blue-500 transition-colors duration-150"
                         ></div>
-                        <div 
+                        <div
                             ref={mainRef}
                             onScroll={() => handleScroll('main')}
+                            onMouseDown={handleGanttMouseDown}
+                            onContextMenu={handleGanttContextMenu}
                             className="flex-grow overflow-auto gantt-chart-container" id="gantt-container">
                             <GanttChart 
                                 tasks={visibleTasks} 
