@@ -92,6 +92,8 @@ const App: React.FC = () => {
     const mainRef = useRef<HTMLDivElement>(null);
     const isSyncingRef = useRef(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Yerelde kayıt yokken oluşturulan demo (SAMPLE) projesi mi? → bulutta proje varsa buluta YÜKLENMEZ
+    const createdDefaultRef = useRef(false);
 
     // Initial load from localStorage
     useEffect(() => {
@@ -119,6 +121,7 @@ const App: React.FC = () => {
                 setAllProjects({ [newId]: defaultProject });
                 setActiveProjectId(newId);
                 setMainView(MainView.Gantt);
+                createdDefaultRef.current = true; // demo: bulutta proje varsa atılacak (yüklenmeyecek)
             }
 
             // Load Templates
@@ -142,6 +145,7 @@ const App: React.FC = () => {
             const defaultProject: Project = { ...SAMPLE_PROJECT, id: newId };
             setAllProjects({ [newId]: defaultProject });
             setActiveProjectId(newId);
+            createdDefaultRef.current = true;
         }
         setIsLoaded(true);
     }, []);
@@ -203,15 +207,24 @@ const App: React.FC = () => {
                 const all = await cloudFetchAll();
                 if (cancelled) return;
                 if (all) {
-                    // Projeler: bulut + yalnız-yerel olanlar (yerel-only buluta gönderilir)
+                    const cloudHasProjects = Object.keys(all.projects).length > 0;
                     setAllProjects(prev => {
                         const merged: { [id: string]: any } = {};
                         Object.entries(all.projects).forEach(([id, p]) => { merged[id] = reviveProject(p); });
+                        // Bulutta proje varken oluşturulan DEMO (SAMPLE) projeyi YOK SAY (buluta yükleme, kopya olmasın)
+                        if (cloudHasProjects && createdDefaultRef.current) {
+                            return merged; // yalnız bulut
+                        }
+                        // Aksi halde: gerçek yalnız-yerel projeleri koru + buluta yükle
                         Object.entries(prev).forEach(([id, p]) => {
-                            if (!merged[id]) { merged[id] = p; cloudSaveProject(p); } // yalnız-yerel → buluta yükle
+                            if (!merged[id]) { merged[id] = p; cloudSaveProject(p); }
                         });
                         return merged;
                     });
+                    // demo atıldıysa aktif projeyi bulut projesine çek
+                    if (cloudHasProjects && createdDefaultRef.current) {
+                        setActiveProjectId(Object.keys(all.projects)[0]);
+                    }
                     // Şablonlar: bulutta varsa onları kullan, yoksa yereli yükle
                     if (all.templates.length) setTemplates(reviveTemplates(all.templates));
                     else if (templates.length) cloudSaveTemplates(templates);
