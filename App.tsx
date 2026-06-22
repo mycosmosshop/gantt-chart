@@ -931,7 +931,9 @@ const App: React.FC = () => {
     const handleCreateProjectFromTemplate = (templateId: string) => {
         const template = templates.find(t => t.templateId === templateId);
         if (!template) return;
-    
+        // Yanlışlıkla kopya proje üremesini önle (her tık yeni proje oluşturur)
+        if (!window.confirm(`"${template.templateName}" şablonundan YENİ bir proje oluşturulsun mu?\n\n(Bu, mevcut projeyi değiştirmez; yeni bir kopya ekler.)`)) return;
+
         const newId = uuidv4();
         const newProjectData = deepCopyProjectData(template.projectData);
     
