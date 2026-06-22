@@ -5,9 +5,9 @@
 -- (Tek seferlik; tekrar çalıştırmak güvenli — "already exists" hataları yok sayılabilir.)
 -- ============================================================
 
--- 1) Tablo (bütün-blob; id'ye göre tek satır) ----------------
+-- 1) Tablo (proje-başına satır; çok-kullanıcıda projeler birbirini EZMEZ) -----
 create table if not exists public.gantt_data (
-  id         text primary key,                     -- 'gantt_projects' | 'gantt_templates'
+  id         text primary key,                     -- 'proj:<projectId>' | 'gantt_templates'
   data       jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now(),
   updated_by uuid default auth.uid()

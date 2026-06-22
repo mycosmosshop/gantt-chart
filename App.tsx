@@ -22,7 +22,7 @@ import { calculateCriticalPath, autoSchedule, processTaskHierarchy, calculateDur
 import { MOCK_RATES } from './services/currencyService';
 import { exportToXml, importFromXml } from './services/msprojectService';
 import { exportToJson, importFromJson } from './services/jsonService';
-import { cloudFetch, cloudSave, subscribe as cloudSubscribe } from './services/cloudSync';
+import { cloudFetchAll, cloudSaveProject, cloudSaveTemplates, cloudDeleteProject, subscribe as cloudSubscribe } from './services/cloudSync';
 
 
 declare const d3: any;
@@ -191,73 +191,73 @@ const App: React.FC = () => {
         return tpls;
     }, []);
 
-    // İlk yükleme: buluttan çek (varsa uygula, yoksa mevcut yereli buluta gönder)
+    // Tek bir projenin tarih alanlarını canlandır
+    const reviveProject = useCallback((proj: any) => reviveProjects({ x: proj }).x, [reviveProjects]);
+
+    // İlk yükleme: buluttaki TÜM projeleri çek + yerelle BİRLEŞTİR (kimse silinmez/ezilmez)
     useEffect(() => {
         if (!isLoaded) return;
         let cancelled = false;
         (async () => {
-            let appliedProjects = false;
-            let appliedTemplates = false;
             try {
-                const [pBlob, tArr] = await Promise.all([
-                    cloudFetch('gantt_projects'),
-                    cloudFetch('gantt_templates'),
-                ]);
+                const all = await cloudFetchAll();
                 if (cancelled) return;
-                if (pBlob && pBlob.projects && Object.keys(pBlob.projects).length) {
-                    setAllProjects(reviveProjects(pBlob.projects));
-                    setActiveProjectId(pBlob.activeProjectId && pBlob.projects[pBlob.activeProjectId]
-                        ? pBlob.activeProjectId
-                        : Object.keys(pBlob.projects)[0]);
-                    appliedProjects = true;
-                }
-                if (Array.isArray(tArr)) {
-                    setTemplates(reviveTemplates(tArr));
-                    appliedTemplates = true;
+                if (all) {
+                    // Projeler: bulut + yalnız-yerel olanlar (yerel-only buluta gönderilir)
+                    setAllProjects(prev => {
+                        const merged: { [id: string]: any } = {};
+                        Object.entries(all.projects).forEach(([id, p]) => { merged[id] = reviveProject(p); });
+                        Object.entries(prev).forEach(([id, p]) => {
+                            if (!merged[id]) { merged[id] = p; cloudSaveProject(p); } // yalnız-yerel → buluta yükle
+                        });
+                        return merged;
+                    });
+                    // Şablonlar: bulutta varsa onları kullan, yoksa yereli yükle
+                    if (all.templates.length) setTemplates(reviveTemplates(all.templates));
+                    else if (templates.length) cloudSaveTemplates(templates);
                 }
             } catch (e) {
-                console.warn('Gantt bulut senkronu okunamadı (çevrimdışı?):', e);
+                console.warn('Gantt bulut senkronu okunamadı (tablo yok / çevrimdışı?):', e);
             }
             if (cancelled) return;
             cloudReadyRef.current = true;
-            // Bulutta veri yoksa: mevcut yerel veriyi buluta taşı (ilk kurulum)
-            if (!appliedProjects) cloudSave('gantt_projects', { projects: allProjects, activeProjectId });
-            if (!appliedTemplates) cloudSave('gantt_templates', templates);
         })();
         return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isLoaded]);
 
-    // Değişiklikleri buluta gönder (bulut hazır olduktan sonra)
+    // Değişiklikleri buluta gönder — her proje kendi satırına (değişmeyenler atlanır)
     useEffect(() => {
         if (isLoaded && cloudReadyRef.current) {
-            cloudSave('gantt_projects', { projects: allProjects, activeProjectId });
+            Object.values(allProjects).forEach(p => cloudSaveProject(p));
         }
-    }, [allProjects, activeProjectId, isLoaded]);
+    }, [allProjects, isLoaded]); // activeProjectId SENKRONLANMAZ (cihaz-yerel)
 
     useEffect(() => {
         if (isLoaded && cloudReadyRef.current) {
-            cloudSave('gantt_templates', templates);
+            cloudSaveTemplates(templates);
         }
     }, [templates, isLoaded]);
 
-    // Başka cihaz/kullanıcı değişiklik yapınca canlı uygula
+    // Başka cihaz/kullanıcı değişikliklerini canlı uygula
     useEffect(() => {
         if (!isLoaded) return;
-        const unsub = cloudSubscribe((id, data) => {
-            if (id === 'gantt_projects' && data && data.projects) {
-                setAllProjects(reviveProjects(data.projects));
-                setActiveProjectId(prev => (prev && data.projects[prev])
-                    ? prev
-                    : (data.activeProjectId && data.projects[data.activeProjectId]
-                        ? data.activeProjectId
-                        : Object.keys(data.projects)[0] || null));
-            } else if (id === 'gantt_templates' && Array.isArray(data)) {
-                setTemplates(reviveTemplates(data));
-            }
-        });
+        const unsub = cloudSubscribe(
+            (id, data) => { // proje eklendi/güncellendi
+                setAllProjects(prev => ({ ...prev, [id]: reviveProject(data) }));
+            },
+            (id) => { // proje silindi
+                setAllProjects(prev => {
+                    if (!prev[id]) return prev;
+                    const next = { ...prev }; delete next[id];
+                    return next;
+                });
+                setActiveProjectId(prev => prev === id ? null : prev);
+            },
+            (t) => setTemplates(reviveTemplates(t)),
+        );
         return unsub;
-    }, [isLoaded, reviveProjects, reviveTemplates]);
+    }, [isLoaded, reviveProject, reviveTemplates]);
 
     // DERIVED STATE from the single source of truth
     const activeProject = useMemo(() => (activeProjectId ? allProjects[activeProjectId] : null), [activeProjectId, allProjects]);
@@ -872,6 +872,7 @@ const App: React.FC = () => {
             }
             
             setAllProjects(newProjects);
+            cloudDeleteProject(projectId); // buluttan da sil (diğer kullanıcılarda da kalkar)
         }
     };
 
