@@ -22,5 +22,16 @@ drop policy if exists "gantt_data auth all" on public.gantt_data;
 create policy "gantt_data auth all" on public.gantt_data
   for all to authenticated using (true) with check (true);
 
--- 4) Realtime (başka kullanıcıların değişikliği canlı yansısın)
-alter publication supabase_realtime add table public.gantt_data;
+-- 4) Realtime (başka kullanıcıların değişikliği canlı yansısın) — idempotent
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'gantt_data'
+  ) then
+    alter publication supabase_realtime add table public.gantt_data;
+  end if;
+end $$;
+
+-- 5) PostgREST şema önbelleğini tazele (tablo hemen REST/uygulamada görünsün)
+notify pgrst, 'reload schema';
