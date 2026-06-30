@@ -122,6 +122,10 @@ export interface CalendarSettings {
   workingDays: number[]; // 0 for Sunday, 6 for Saturday
   holidays: string[]; // 'YYYY-MM-DD' format
   hoursPerDay: number;
+  // false ise OTOMATIK ZAMANLAMA KAPALI: bağımlılık okları görünür kalır ama
+  // bir görev düzenlenince zincir yeniden hesaplanmaz; elle girilen tarihler sabit kalır.
+  // undefined/true => açık (varsayılan, eski davranış).
+  autoScheduleEnabled?: boolean;
 }
 
 export interface TeamMember {

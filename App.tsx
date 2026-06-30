@@ -704,7 +704,10 @@ const App: React.FC = () => {
         }
     
         const updatedTasks = project.tasks.map(task => task.id === finalTask.id ? finalTask : task);
-        const rescheduledTasks = autoSchedule(finalTask, updatedTasks, project.calendarSettings);
+        // Otomatik zamanlama kapalıysa zinciri yeniden hesaplama; sadece düzenlenen görevi uygula (elle tarih sabit kalır).
+        const rescheduledTasks = project.calendarSettings.autoScheduleEnabled === false
+            ? updatedTasks
+            : autoSchedule(finalTask, updatedTasks, project.calendarSettings);
         return { ...project, tasks: rescheduledTasks };
     };
 
@@ -746,7 +749,7 @@ const App: React.FC = () => {
                 newTasks.push(newTask); // Fallback for root tasks or if something goes wrong
             }
             
-            return { ...project, tasks: autoSchedule(newTask, newTasks, project.calendarSettings) };
+            return { ...project, tasks: project.calendarSettings.autoScheduleEnabled === false ? newTasks : autoSchedule(newTask, newTasks, project.calendarSettings) };
         });
     }, [performUndoableAction]);
     
@@ -805,10 +808,12 @@ const App: React.FC = () => {
                     });
                 });
     
-                externalSuccessors.forEach(successorId => {
-                    const taskToReschedule = newTasks.find(t => t.id === successorId)!;
-                    newTasks = autoSchedule(taskToReschedule, newTasks, project.calendarSettings);
-                });
+                if (project.calendarSettings.autoScheduleEnabled !== false) {
+                    externalSuccessors.forEach(successorId => {
+                        const taskToReschedule = newTasks.find(t => t.id === successorId)!;
+                        newTasks = autoSchedule(taskToReschedule, newTasks, project.calendarSettings);
+                    });
+                }
                 
                 return { ...project, tasks: newTasks };
             } else {
@@ -1165,10 +1170,13 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             });
 
             let finalTasks = [...adjustedTasks];
-            adjustedTasks.forEach(task => {
-                finalTasks = autoSchedule(task, finalTasks, newSettings);
-            });
-            
+            // Otomatik zamanlama kapalıysa takvim değişiminde de tarihleri yeniden hesaplama.
+            if (newSettings.autoScheduleEnabled !== false) {
+                adjustedTasks.forEach(task => {
+                    finalTasks = autoSchedule(task, finalTasks, newSettings);
+                });
+            }
+
             return { ...project, tasks: finalTasks, calendarSettings: newSettings };
         });
     }, [performUndoableAction]);

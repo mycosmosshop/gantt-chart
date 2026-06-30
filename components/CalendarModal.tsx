@@ -98,6 +98,23 @@ const CalendarModal: React.FC<CalendarModalProps> = ({ currentSettings, onSave, 
                     </div>
 
                     <div>
+                        <label className="flex items-center space-x-3 p-3 bg-blue-50 border border-blue-200 rounded-md cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={settings.autoScheduleEnabled !== false}
+                                onChange={(e) => setSettings({ ...settings, autoScheduleEnabled: e.target.checked })}
+                                className="h-5 w-5 rounded flex-shrink-0"
+                            />
+                            <span className="text-sm">
+                                <strong>Otomatik zamanlama</strong> — bağımlılıklara göre tarihleri otomatik kaydır
+                            </span>
+                        </label>
+                        <div className="mt-1 text-xs text-gray-500">
+                            Kapatırsan: ilişki okları görünür kalır ama bir görevi düzenleyince zincir <strong>yeniden hesaplanmaz</strong> — elle girdiğin tarihler sabit kalır.
+                        </div>
+                    </div>
+
+                    <div>
                         <label htmlFor="holiday-preset" className="block mb-2 text-sm font-medium">Tatil Takvimi Şablonları</label>
                         <select 
                           id="holiday-preset"
