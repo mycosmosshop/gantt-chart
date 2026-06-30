@@ -333,10 +333,13 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, allTasks, viewMode, onUp
                     default: startX = timeScale(predecessor.end); endX = timeScale(task.start); break;
                 }
 
-                if (endX > startX) {
-                    dependencyLines.append('path').attr('d', `M ${startX} ${startY} H ${startX + 10} V ${endY} H ${endX}`).attr('marker-end', 'url(#arrowhead)');
+                const arrowPad = 12;
+                if (endX > startX + arrowPad) {
+                    // Yeterli yer var: öncülün sağından çık, ardıla SOLDAN gir (ok ucu sağa bakar)
+                    dependencyLines.append('path').attr('d', `M ${startX} ${startY} H ${startX + arrowPad} V ${endY} H ${endX}`).attr('marker-end', 'url(#arrowhead)');
                 } else {
-                     dependencyLines.append('path').attr('d', `M ${startX} ${startY} H ${startX + 10} V ${endY - rowHeight/2} H ${endX - 10} V ${endY} H ${endX}`).attr('marker-end', 'url(#arrowhead)');
+                    // Ardıl, öncülün hemen ardında/önünde: dirsekle dolaş ama ardıla DAİMA SOLDAN yaklaş (ok ucu sağa bakar)
+                    dependencyLines.append('path').attr('d', `M ${startX} ${startY} H ${startX + arrowPad} V ${endY - rowHeight/2} H ${endX - arrowPad} V ${endY} H ${endX}`).attr('marker-end', 'url(#arrowhead)');
                 }
             });
         });
