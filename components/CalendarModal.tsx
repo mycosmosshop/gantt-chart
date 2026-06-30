@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CalendarSettings } from '../types';
-import { TURKISH_HOLIDAYS_2025, DEFAULT_CALENDAR_SETTINGS } from '../constants';
+import { TURKISH_HOLIDAYS_2025, TURKISH_HOLIDAYS_2026, TURKISH_HOLIDAYS_2027, DEFAULT_CALENDAR_SETTINGS } from '../constants';
 import { AddIcon, DeleteIcon } from './Icons';
 
 interface CalendarModalProps {
@@ -27,8 +27,14 @@ const CalendarModal: React.FC<CalendarModalProps> = ({ currentSettings, onSave, 
 
     const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const preset = e.target.value;
-        if (preset === 'turkey') {
-            setSettings({ ...settings, holidays: [...new Set([...settings.holidays, ...TURKISH_HOLIDAYS_2025])].sort() });
+        const presetMap: { [key: string]: string[] } = {
+            turkey: TURKISH_HOLIDAYS_2025,
+            turkey2026: TURKISH_HOLIDAYS_2026,
+            turkey2027: TURKISH_HOLIDAYS_2027,
+        };
+        if (presetMap[preset]) {
+            // Mevcut tatillere EKLE (yıllar üst üste seçilebilir), tekrarları temizle, sırala
+            setSettings({ ...settings, holidays: [...new Set([...settings.holidays, ...presetMap[preset]])].sort() });
         } else {
             setSettings({ ...settings, holidays: DEFAULT_CALENDAR_SETTINGS.holidays });
         }
@@ -100,6 +106,8 @@ const CalendarModal: React.FC<CalendarModalProps> = ({ currentSettings, onSave, 
                         >
                             <option value="none">Varsayılan (Tatil Yok)</option>
                             <option value="turkey">Türkiye (2025)</option>
+                            <option value="turkey2026">Türkiye (2026)</option>
+                            <option value="turkey2027">Türkiye (2027)</option>
                         </select>
                     </div>
 

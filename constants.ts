@@ -117,6 +117,46 @@ export const TURKISH_HOLIDAYS_2025: string[] = [
     '2025-10-29', // Republic Day
 ];
 
+// Dini bayram tarihleri Diyanet tahminidir; resmi açıklamayla değişebilir.
+export const TURKISH_HOLIDAYS_2026: string[] = [
+    '2026-01-01', // Yılbaşı
+    '2026-03-19', // Ramazan Bayramı Arifesi (yarım gün)
+    '2026-03-20', // Ramazan Bayramı 1. Gün
+    '2026-03-21', // Ramazan Bayramı 2. Gün
+    '2026-03-22', // Ramazan Bayramı 3. Gün
+    '2026-04-23', // Ulusal Egemenlik ve Çocuk Bayramı
+    '2026-05-01', // Emek ve Dayanışma Günü
+    '2026-05-19', // Atatürk'ü Anma, Gençlik ve Spor Bayramı
+    '2026-05-26', // Kurban Bayramı Arifesi (yarım gün)
+    '2026-05-27', // Kurban Bayramı 1. Gün
+    '2026-05-28', // Kurban Bayramı 2. Gün
+    '2026-05-29', // Kurban Bayramı 3. Gün
+    '2026-05-30', // Kurban Bayramı 4. Gün
+    '2026-07-15', // Demokrasi ve Milli Birlik Günü
+    '2026-08-30', // Zafer Bayramı
+    '2026-10-28', // Cumhuriyet Bayramı Arifesi (yarım gün)
+    '2026-10-29', // Cumhuriyet Bayramı
+];
+
+export const TURKISH_HOLIDAYS_2027: string[] = [
+    '2027-01-01', // Yılbaşı
+    '2027-03-09', // Ramazan Bayramı Arifesi (yarım gün)
+    '2027-03-10', // Ramazan Bayramı 1. Gün
+    '2027-03-11', // Ramazan Bayramı 2. Gün
+    '2027-03-12', // Ramazan Bayramı 3. Gün
+    '2027-04-23', // Ulusal Egemenlik ve Çocuk Bayramı
+    '2027-05-01', // Emek ve Dayanışma Günü
+    '2027-05-15', // Kurban Bayramı Arifesi (yarım gün)
+    '2027-05-16', // Kurban Bayramı 1. Gün
+    '2027-05-17', // Kurban Bayramı 2. Gün
+    '2027-05-18', // Kurban Bayramı 3. Gün
+    '2027-05-19', // Kurban Bayramı 4. Gün / Atatürk'ü Anma, Gençlik ve Spor Bayramı
+    '2027-07-15', // Demokrasi ve Milli Birlik Günü
+    '2027-08-30', // Zafer Bayramı
+    '2027-10-28', // Cumhuriyet Bayramı Arifesi (yarım gün)
+    '2027-10-29', // Cumhuriyet Bayramı
+];
+
 export const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
     workingDays: [1, 2, 3, 4, 5], // Monday to Friday
     holidays: [],
