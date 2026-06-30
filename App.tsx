@@ -22,7 +22,7 @@ import { calculateCriticalPath, autoSchedule, processTaskHierarchy, calculateDur
 import { MOCK_RATES } from './services/currencyService';
 import { exportToXml, importFromXml } from './services/msprojectService';
 import { exportToJson, importFromJson } from './services/jsonService';
-import { cloudFetchAll, cloudSaveProject, cloudSaveTemplates, cloudDeleteProject, subscribe as cloudSubscribe } from './services/cloudSync';
+import { cloudFetchAll, cloudSaveProject, cloudSaveTemplates, cloudDeleteProject, subscribe as cloudSubscribe, flushPending as cloudFlushPending } from './services/cloudSync';
 
 
 declare const d3: any;
@@ -245,6 +245,21 @@ const App: React.FC = () => {
             Object.values(allProjects).forEach(p => cloudSaveProject(p));
         }
     }, [allProjects, isLoaded]); // activeProjectId SENKRONLANMAZ (cihaz-yerel)
+
+    // Sekme gizlenince/kapanınca bekleyen (debounce) bulut kayıtlarını HEMEN gönder.
+    // Böylece "değişiklik yaptım, çıkıp girdim, eski hâline döndü" sorunu olmaz:
+    // çıkıştan önce son değişiklikler buluta yazılır, yeniden açılışta bulut bunları getirir.
+    useEffect(() => {
+        const flush = () => { if (document.visibilityState === 'hidden') cloudFlushPending(); };
+        document.addEventListener('visibilitychange', flush);
+        window.addEventListener('pagehide', cloudFlushPending);
+        window.addEventListener('beforeunload', cloudFlushPending);
+        return () => {
+            document.removeEventListener('visibilitychange', flush);
+            window.removeEventListener('pagehide', cloudFlushPending);
+            window.removeEventListener('beforeunload', cloudFlushPending);
+        };
+    }, []);
 
     useEffect(() => {
         if (isLoaded && cloudReadyRef.current) {

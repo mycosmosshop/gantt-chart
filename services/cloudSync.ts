@@ -51,22 +51,38 @@ export const cloudFetchAll = async (): Promise<{ projects: { [id: string]: any }
 };
 
 const _timers: { [id: string]: any } = {};
+const _pending: { [id: string]: any } = {}; // debounce bekleyen son içerik (flush için saklanır)
+
+// Bekleyen bir kaydı HEMEN buluta yaz (debounce'u atla).
+const _doUpsert = async (id: string): Promise<void> => {
+    if (!(id in _pending)) return;
+    const data = _pending[id];
+    const json = JSON.stringify(data);
+    clearTimeout(_timers[id]);
+    const sb = getClient(); if (!sb) return;
+    if (!(await isAuthed())) return; // oturumsuzken yazma
+    try {
+        const { error } = await sb.from('gantt_data').upsert(
+            { id, data, updated_at: new Date().toISOString() },
+            { onConflict: 'id' }
+        );
+        if (!error) { _lastSeen[id] = json; delete _pending[id]; }
+    } catch { /* çevrimdışı — sessizce geç */ }
+};
+
 // Debounce'lu upsert — aynı içerik tekrar gönderilmez.
 const upsert = (id: string, data: any): void => {
     const json = JSON.stringify(data);
     if (_lastSeen[id] === json) return; // değişmedi
+    _pending[id] = data; // son içeriği sakla (flush edebilmek için)
     clearTimeout(_timers[id]);
-    _timers[id] = setTimeout(async () => {
-        const sb = getClient(); if (!sb) return;
-        if (!(await isAuthed())) return; // oturumsuzken yazma
-        try {
-            const { error } = await sb.from('gantt_data').upsert(
-                { id, data, updated_at: new Date().toISOString() },
-                { onConflict: 'id' }
-            );
-            if (!error) _lastSeen[id] = json;
-        } catch { /* çevrimdışı — sessizce geç */ }
-    }, 1000);
+    _timers[id] = setTimeout(() => { _doUpsert(id); }, 1000);
+};
+
+// Sekme gizlenince/kapanırken bekleyen TÜM kayıtları hemen gönder
+// (çıkışta debounce penceresinde kalan değişikliklerin kaybını önler).
+export const flushPending = (): void => {
+    Object.keys(_pending).forEach(id => { _doUpsert(id); });
 };
 
 export const cloudSaveProject = (project: any): void => {
