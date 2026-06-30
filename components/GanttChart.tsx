@@ -325,12 +325,15 @@ const GanttChart: React.FC<GanttChartProps> = ({ tasks, allTasks, viewMode, onUp
                 let startX, endX;
                 const startY = predecessorIndex * rowHeight + 40 + rowHeight / 2;
                 const endY = taskIndex * rowHeight + 40 + rowHeight / 2;
-                
+                // Milestone (elmas) icin: ok merkeze degil KOSEYE baglansin (yari-genislik = barHeight/2)
+                const predHalf = predecessor.isMilestone ? barHeight / 2 : 0;
+                const succHalf = task.isMilestone ? barHeight / 2 : 0;
+
                 switch (dep.type) {
-                    case DependencyType.SS: startX = timeScale(predecessor.start); endX = timeScale(task.start); break;
-                    case DependencyType.FF: startX = timeScale(predecessor.end); endX = timeScale(task.end); break;
-                    case DependencyType.SF: startX = timeScale(predecessor.start); endX = timeScale(task.end); break;
-                    default: startX = timeScale(predecessor.end); endX = timeScale(task.start); break;
+                    case DependencyType.SS: startX = timeScale(predecessor.start) - predHalf; endX = timeScale(task.start) - succHalf; break;
+                    case DependencyType.FF: startX = timeScale(predecessor.end) + predHalf; endX = timeScale(task.end) + succHalf; break;
+                    case DependencyType.SF: startX = timeScale(predecessor.start) - predHalf; endX = timeScale(task.end) + succHalf; break;
+                    default: startX = timeScale(predecessor.end) + predHalf; endX = timeScale(task.start) - succHalf; break;
                 }
 
                 const arrowPad = 12;
