@@ -81,7 +81,12 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, tasks, resources, onSave, o
                 setPositionValue(siblings.length > 0 ? 'last' : 'first');
             }
         }
-    }, [task, updateFormData, calendarSettings, creationParentId, creationInsertAfterId, tasks]);
+    // Yalniz duzenlenen gorev (veya yeni-olusturma) degisince formData baslatilir.
+    // ESKIDEN `tasks` da vardi: bulut realtime senkronu/App re-render `tasks` referansini
+    // yenileyince effect tekrar calisip formData'yi SIFIRLIYOR, kullanicinin eklemekte
+    // oldugu bagimliligi/dropdown'i aninda siliyordu. Artik sadece task kimligine baglidir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [task?.id]);
     
     // Recalculates work when dependencies (start/end date, assigned resources) change
     useEffect(() => {
