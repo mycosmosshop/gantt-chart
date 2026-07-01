@@ -65,6 +65,27 @@ const deepCopyHistoryState = (state: HistoryState): HistoryState => ({
     collapsedTasks: state.collapsedTasks ? [...state.collapsedTasks] : [],
 });
 
+// YETİM görev temizliği: parentId'si silinmiş bir ebeveyne bağlı (kök'e ulaşamayan) görevler
+// Gantt'ta (processTaskHierarchy) zaten görünmez ama ham `tasks`'te kalıp charter min/max gibi
+// yerlere sızar (ör. bitiş tarihini ileri kaydırır). Yüklemede kalıcı düşürülür. Zincir + döngü korumalı.
+const pruneOrphanTasks = <T extends { id: number; parentId: number | null }>(tasks: T[]): T[] => {
+    if (!Array.isArray(tasks)) return tasks;
+    const byId = new Map(tasks.map(t => [t.id, t]));
+    const reachable = (t: T): boolean => {
+        const seen = new Set<number>();
+        let cur: T | undefined = t;
+        while (cur) {
+            if (cur.parentId == null) return true;         // kök'e ulaştı
+            if (!byId.has(cur.parentId)) return false;      // ebeveyn yok → yetim
+            if (seen.has(cur.id)) return false;             // döngü koruması
+            seen.add(cur.id);
+            cur = byId.get(cur.parentId);
+        }
+        return false;
+    };
+    return tasks.filter(reachable);
+};
+
 const App: React.FC = () => {
     // Multi-project state - SINGLE SOURCE OF TRUTH
     const [allProjects, setAllProjects] = useState<{ [id: string]: Project }>({});
@@ -104,7 +125,7 @@ const App: React.FC = () => {
                 const { projects, activeProjectId: savedActiveId } = JSON.parse(savedData);
                 
                 Object.values(projects).forEach((proj: any) => {
-                    proj.tasks = proj.tasks.map((task: any) => ({
+                    proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => ({
                         ...task,
                         start: new Date(task.start),
                         end: new Date(task.end),
@@ -173,7 +194,7 @@ const App: React.FC = () => {
     // Bulut JSON'daki tarih (ISO string) alanlarını Date'e çevir
     const reviveProjects = useCallback((projects: { [id: string]: any }) => {
         Object.values(projects).forEach((proj: any) => {
-            proj.tasks = (proj.tasks || []).map((task: any) => ({
+            proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => ({
                 ...task,
                 start: new Date(task.start),
                 end: new Date(task.end),
