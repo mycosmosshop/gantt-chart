@@ -591,16 +591,18 @@ const App: React.FC = () => {
         let newEndDate = '';
         let newMilestones: Milestone[] = [];
 
-        if (tasks.length > 0) {
-            const startDates = tasks.map(t => t.start.getTime());
-            const endDates = tasks.map(t => t.end.getTime());
+        if (processedTasks.length > 0) {
+            // Charter, Gantt'ta GÖRÜNEN tarihleri yansıtmalı → ham `tasks` değil,
+            // zamanlanmış/özet-rollup uygulanmış `processedTasks` üzerinden hesapla.
+            const startDates = processedTasks.map(t => t.start.getTime());
+            const endDates = processedTasks.map(t => t.end.getTime());
             const minDate = new Date(Math.min(...startDates));
             const maxDate = new Date(Math.max(...endDates));
-            
+
             newStartDate = toDateString(minDate);
             newEndDate = toDateString(maxDate);
 
-            newMilestones = tasks
+            newMilestones = processedTasks
                 .filter(t => t.isMilestone)
                 .map(t => ({
                     id: t.id.toString(),
@@ -625,7 +627,7 @@ const App: React.FC = () => {
             return prev;
         });
 
-    }, [tasks, updateActiveProject]);
+    }, [processedTasks, updateActiveProject]);
 
     const budgetCalculatedCosts = useMemo(() => {
         const costs = new Map<string, number>();
