@@ -36,6 +36,31 @@ type HistoryState = {
     collapsedTasks?: number[];
 };
 
+// Tarih güvenliği: geçersiz ya da aşırı (çok ileri/geri) tarihleri makul aralığa (2000–2100) kıstır.
+// Bozuk bir görev tarihi Gantt zaman eksenini/tahsis döngülerini devasa yapıp uygulamayı kilitlemesin.
+const DATE_MIN = new Date('2000-01-01T00:00:00').getTime();
+const DATE_MAX = new Date('2100-12-31T00:00:00').getTime();
+const sanitizeDate = (value: any, fallback: Date): Date => {
+    const d = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    const t = d.getTime();
+    if (isNaN(t)) return new Date(fallback.getTime());
+    if (t < DATE_MIN) return new Date(DATE_MIN);
+    if (t > DATE_MAX) return new Date(DATE_MAX);
+    return d;
+};
+const reviveTaskDates = (task: any): any => {
+    const start = sanitizeDate(task.start, new Date());
+    let end = sanitizeDate(task.end, start);
+    if (end.getTime() < start.getTime()) end = new Date(start.getTime());
+    return {
+        ...task,
+        start,
+        end,
+        baselineStart: task.baselineStart != null ? sanitizeDate(task.baselineStart, start) : null,
+        baselineEnd: task.baselineEnd != null ? sanitizeDate(task.baselineEnd, end) : null,
+    };
+};
+
 const deepCopyTasks = (tasksToCopy: Task[]): Task[] => {
     if (!tasksToCopy) return [];
     return tasksToCopy.map(task => ({
@@ -125,13 +150,7 @@ const App: React.FC = () => {
                 const { projects, activeProjectId: savedActiveId } = JSON.parse(savedData);
                 
                 Object.values(projects).forEach((proj: any) => {
-                    proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => ({
-                        ...task,
-                        start: new Date(task.start),
-                        end: new Date(task.end),
-                        baselineStart: task.baselineStart ? new Date(task.baselineStart) : null,
-                        baselineEnd: task.baselineEnd ? new Date(task.baselineEnd) : null,
-                    }));
+                    proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => reviveTaskDates(task));
                 });
 
                 setAllProjects(projects);
@@ -151,11 +170,7 @@ const App: React.FC = () => {
                 const parsedTemplates = JSON.parse(savedTemplates) as ProjectTemplate[];
                 // Revive dates in template tasks
                 parsedTemplates.forEach(template => {
-                    template.projectData.tasks = template.projectData.tasks.map((task: any) => ({
-                        ...task,
-                        start: new Date(task.start),
-                        end: new Date(task.end),
-                    }));
+                    template.projectData.tasks = template.projectData.tasks.map((task: any) => reviveTaskDates(task));
                 });
                 setTemplates(parsedTemplates);
             }
@@ -194,24 +209,14 @@ const App: React.FC = () => {
     // Bulut JSON'daki tarih (ISO string) alanlarını Date'e çevir
     const reviveProjects = useCallback((projects: { [id: string]: any }) => {
         Object.values(projects).forEach((proj: any) => {
-            proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => ({
-                ...task,
-                start: new Date(task.start),
-                end: new Date(task.end),
-                baselineStart: task.baselineStart ? new Date(task.baselineStart) : null,
-                baselineEnd: task.baselineEnd ? new Date(task.baselineEnd) : null,
-            }));
+            proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => reviveTaskDates(task));
         });
         return projects;
     }, []);
 
     const reviveTemplates = useCallback((tpls: any[]) => {
         tpls.forEach((t: any) => {
-            t.projectData.tasks = (t.projectData.tasks || []).map((task: any) => ({
-                ...task,
-                start: new Date(task.start),
-                end: new Date(task.end),
-            }));
+            t.projectData.tasks = (t.projectData.tasks || []).map((task: any) => reviveTaskDates(task));
         });
         return tpls;
     }, []);

@@ -29,7 +29,13 @@ export const isWorkingDay = (date: Date, settings: CalendarSettings): boolean =>
     return true;
 };
 
+// Tarih döngüleri için güvenlik sınırı: bozuk/aşırı veri (geçersiz tarih, çok ileri tarih,
+// boş çalışma günleri) sonsuz/devasa döngüye yol açıp uygulamayı kilitlemesin.
+const MAX_DATE_ITER = 200000; // ~547 yıl; gerçek projeler bunun çok altındadır
+
 export const calculateDuration = (start: Date, end: Date, settings: CalendarSettings): number => {
+    // Geçersiz tarih koruması
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
     if (end < start) return 0;
     let count = 0;
     const current = new Date(start);
@@ -41,12 +47,14 @@ export const calculateDuration = (start: Date, end: Date, settings: CalendarSett
     if (current.getTime() === endDate.getTime()) {
         return isWorkingDay(current, settings) ? 1 : 0;
     }
-    
+
+    let guard = 0;
     while (current.getTime() <= endDate.getTime()) {
         if (isWorkingDay(current, settings)) {
             count++;
         }
         current.setDate(current.getDate() + 1);
+        if (++guard > MAX_DATE_ITER) break;
     }
     return count;
 };
@@ -54,22 +62,27 @@ export const calculateDuration = (start: Date, end: Date, settings: CalendarSett
 
 export const addDays = (date: Date, days: number, settings: CalendarSettings): Date => {
     const newDate = new Date(date.valueOf());
+    if (isNaN(newDate.getTime())) return newDate; // geçersiz tarih koruması
     let daysRemaining = Math.max(0, days);
 
     // If the starting date is not a working day, we don't advance it.
     // The duration calculation assumes the first day is 'date'.
     // The end date, however, must be a working day.
-    
+
+    let guard = 0;
     while (daysRemaining > 0) {
         newDate.setDate(newDate.getDate() + 1);
         if (isWorkingDay(newDate, settings)) {
             daysRemaining--;
         }
+        if (++guard > MAX_DATE_ITER) break; // çalışma günü tanımsızsa/sonsuz döngü koruması
     }
 
-    // Ensure the final date is a working day
+    // Ensure the final date is a working day (çalışma günü yoksa ~10 yıl sonra bırak)
+    guard = 0;
     while (!isWorkingDay(newDate, settings)) {
         newDate.setDate(newDate.getDate() + 1);
+        if (++guard > 3660) break;
     }
 
     return newDate;
@@ -78,21 +91,24 @@ export const addDays = (date: Date, days: number, settings: CalendarSettings): D
 
 const addLagDays = (date: Date, lag: number, settings: CalendarSettings): Date => {
     let newDate = new Date(date);
+    if (isNaN(newDate.getTime())) return newDate; // geçersiz tarih koruması
     let daysLeft = lag;
     const direction = lag >= 0 ? 1 : -1;
-    
+
     if (direction === 1) { // For positive lag, start from the next day
       newDate.setDate(newDate.getDate() + 1);
     }
 
     daysLeft = Math.abs(daysLeft);
 
+    let guard = 0;
     while (daysLeft > 0 || !isWorkingDay(newDate, settings)) {
         if (isWorkingDay(newDate, settings)) {
             daysLeft--;
         }
         if (daysLeft === 0 && isWorkingDay(newDate, settings)) break;
         newDate.setDate(newDate.getDate() + direction);
+        if (++guard > MAX_DATE_ITER) break; // sonsuz döngü koruması
     }
     return newDate;
 };
@@ -101,26 +117,29 @@ export const calculateDateVariance = (date1: Date, date2: Date, settings: Calend
     // A positive result means date2 is later than date1
     const d1 = new Date(date1);
     const d2 = new Date(date2);
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return 0; // geçersiz tarih koruması
     d1.setHours(0,0,0,0);
     d2.setHours(0,0,0,0);
 
     if (d1.getTime() === d2.getTime()) return 0;
-    
+
     const isNegative = d2 < d1;
     const start = isNegative ? d2 : d1;
     const end = isNegative ? d1 : d2;
-    
+
     let count = 0;
     const current = new Date(start);
-    
+
     // Count working days between the two dates
+    let guard = 0;
     while (current.getTime() < end.getTime()) {
         current.setDate(current.getDate() + 1);
         if (isWorkingDay(current, settings)) {
             count++;
         }
+        if (++guard > MAX_DATE_ITER) break;
     }
-    
+
     return isNegative ? -count : count;
 };
 
@@ -160,7 +179,8 @@ export const calculateTaskCost = (
                     const overtimePremiumRate = resource.ovtRate - resource.stdRate;
                     let currentDate = new Date(task.start);
                     const endDate = new Date(task.end);
-                    while (currentDate <= endDate) {
+                    let ovGuard = 0;
+                    while (currentDate <= endDate && !isNaN(currentDate.getTime()) && ++ovGuard <= MAX_DATE_ITER) {
                         if (isWorkingDay(currentDate, settings)) {
                             const dateStr = toDateString(currentDate);
                             const totalDailyAllocation = allocationData[resource.id]?.[dateStr] || 0;
@@ -307,10 +327,13 @@ export const processTaskHierarchy = (
     calculateSummaries(tree);
 
     // Pre-order traversal to flatten the tree into a list in the correct display/export order
+    // Ham sıra indeksini önceden hesapla (comparator içinde findIndex O(n²) idi → O(1))
+    const orderIndex = new Map<number, number>();
+    tasks.forEach((t, i) => orderIndex.set(t.id, i));
     const finalTasks: ProcessedTask[] = [];
     const flattenTreePreOrder = (nodes: ProcessedTask[], level: number, prefix: string) => {
         // Sort siblings based on their original order in the raw tasks array
-        nodes.sort((a, b) => tasks.findIndex(t => t.id === a.id) - tasks.findIndex(t => t.id === b.id))
+        nodes.sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0))
             .forEach((node, index) => {
                 node.level = level;
                 node.wbs = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
