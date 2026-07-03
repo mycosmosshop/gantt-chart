@@ -61,6 +61,43 @@ const reviveTaskDates = (task: any): any => {
     };
 };
 
+// Proje içi AŞIRI-SAPAN (bozuk) yaprak tarihlerini onar: projeyi bozmadan yalnız net aykırıları düzeltir.
+// Kök/özet görevlere DOKUNMAZ (onlar çocuklardan roll-up olur). Medyandan ±3 yıldan uzak yaprak tarihleri
+// gerçek proje penceresine (aşırı uçlar hariç en erken/geç) çeker. Böylece tek bozuk tarih (ör. 2000)
+// özet görevi 2000'den başlatmaz. Kaydettikçe düzeltilmiş tarih kalıcı olur (kendini onarır).
+const repairProjectDates = (tasks: any[]): any[] => {
+    if (!tasks || tasks.length < 4) return tasks;
+    const childParentIds = new Set(tasks.filter(t => t.parentId != null).map(t => t.parentId));
+    const isSummary = (t: any) => childParentIds.has(t.id);
+    const leaves = tasks.filter(t => !isSummary(t));
+    const times: number[] = [];
+    leaves.forEach(t => { const s = t.start?.getTime?.(); const e = t.end?.getTime?.(); if (typeof s === 'number' && !isNaN(s)) times.push(s); if (typeof e === 'number' && !isNaN(e)) times.push(e); });
+    if (times.length < 4) return tasks;
+    times.sort((a, b) => a - b);
+    const median = times[Math.floor(times.length / 2)];
+    const YEAR = 365 * 86400000;
+    const CUT = 3 * YEAR;                 // medyandan bu kadar uzak = aykırı (bozuk)
+    const loBound = median - CUT, hiBound = median + 3 * CUT;
+    // Aykırıları hariç tutarak gerçek proje penceresi
+    const legitStarts = leaves.map(t => t.start?.getTime?.()).filter((s: number) => typeof s === 'number' && !isNaN(s) && s >= loBound && s <= hiBound);
+    const legitEnds = leaves.map(t => t.end?.getTime?.()).filter((e: number) => typeof e === 'number' && !isNaN(e) && e >= loBound && e <= hiBound);
+    if (!legitStarts.length || !legitEnds.length) return tasks;
+    const projMin = Math.min(...legitStarts);
+    const projMax = Math.max(...legitEnds);
+    let repaired = 0;
+    const out = tasks.map(t => {
+        if (isSummary(t)) return t;      // özet görev → çocuklardan türetilir, dokunma
+        let s = t.start?.getTime?.(); let e = t.end?.getTime?.();
+        let ns = s, ne = e;
+        if (typeof s !== 'number' || isNaN(s) || s < loBound || s > hiBound) ns = projMin;   // aşırı erken/geç/geçersiz başlangıç
+        if (typeof e !== 'number' || isNaN(e) || e < ns || e > hiBound) ne = Math.max(ns, Math.min(typeof e === 'number' && !isNaN(e) ? e : ns, projMax));
+        if (ns !== s || ne !== e) { repaired++; return { ...t, start: new Date(ns), end: new Date(ne) }; }
+        return t;
+    });
+    if (repaired > 0) console.info(`[Gantt] ${repaired} bozuk görev tarihi proje penceresine çekildi (onarıldı).`);
+    return out;
+};
+
 const deepCopyTasks = (tasksToCopy: Task[]): Task[] => {
     if (!tasksToCopy) return [];
     return tasksToCopy.map(task => ({
@@ -150,7 +187,7 @@ const App: React.FC = () => {
                 const { projects, activeProjectId: savedActiveId } = JSON.parse(savedData);
                 
                 Object.values(projects).forEach((proj: any) => {
-                    proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => reviveTaskDates(task));
+                    proj.tasks = repairProjectDates(pruneOrphanTasks(proj.tasks || []).map((task: any) => reviveTaskDates(task)));
                 });
 
                 setAllProjects(projects);
@@ -209,7 +246,7 @@ const App: React.FC = () => {
     // Bulut JSON'daki tarih (ISO string) alanlarını Date'e çevir
     const reviveProjects = useCallback((projects: { [id: string]: any }) => {
         Object.values(projects).forEach((proj: any) => {
-            proj.tasks = pruneOrphanTasks(proj.tasks || []).map((task: any) => reviveTaskDates(task));
+            proj.tasks = repairProjectDates(pruneOrphanTasks(proj.tasks || []).map((task: any) => reviveTaskDates(task)));
         });
         return projects;
     }, []);
