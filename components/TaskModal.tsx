@@ -453,6 +453,21 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, tasks, resources, onSave, o
                                     </select>
                                 </div>
                             </div>
+                            {/* Excel Gantt şablonu (PL130) sütunları: Responsible, Remarks, Report → Milestone Status */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block mb-1 text-sm font-medium">Responsible</label>
+                                    <input type="text" name="responsible" value={formData.responsible ?? ''} onChange={handleChange} placeholder="ör. Sanifoam / Customer" className="w-full p-2 bg-gray-50 rounded border border-gray-300" />
+                                </div>
+                                <div className="flex items-end pb-2">
+                                    <input type="checkbox" id="report" name="report" checked={!!formData.report} onChange={handleChange} className="h-4 w-4 rounded bg-gray-200 border-gray-400 text-blue-600 focus:ring-blue-500" />
+                                    <label htmlFor="report" className="ml-2 text-sm font-medium">Report (Milestone Status)</label>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block mb-1 text-sm font-medium">Remarks (status sheet)</label>
+                                <input type="text" name="remarks" value={formData.remarks ?? ''} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300" />
+                            </div>
                         </div>
                     )}
                     {activeTab === 'dependencies' && (

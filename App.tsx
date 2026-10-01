@@ -1296,6 +1296,27 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         const file = event.target.files?.[0];
         if (!file) return;
 
+        // Excel Gantt şablonu (PL130 .xlsm/.xlsx): ikili dosya, ayrı yol
+        if (/\.xls[xm]$/i.test(file.name)) {
+            const projectName = file.name.replace(/\.xls[xm]$/i, '');
+            file.arrayBuffer()
+                .then(async buf => (await import('./services/excelGanttService')).importExcelGantt(buf, file.name))
+                .then(newProjectData => {
+                    const newId = uuidv4();
+                    const newProject: Project = { ...newProjectData, id: newId, charter: { ...newProjectData.charter, projectTitle: newProjectData.charter.projectTitle || projectName } };
+                    setAllProjects(prev => ({ ...prev, [newId]: newProject }));
+                    setActiveProjectId(newId);
+                    setMainView(MainView.Gantt);
+                    alert(`"${projectName}" Excel Gantt dosyasından içe aktarıldı (${newProject.tasks.length} görev).`);
+                })
+                .catch(error => {
+                    console.error("Failed to import Excel Gantt:", error);
+                    alert(`Excel Gantt içe aktarılamadı: ${error instanceof Error ? error.message : error}`);
+                });
+            if (event.target) event.target.value = '';
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
@@ -1330,6 +1351,26 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         if(event.target) event.target.value = '';
     };
     
+    const handleExportExcel = useCallback(async () => {
+        if (!activeProject) { alert("Lütfen bir proje seçin."); return; }
+        try {
+            const res = await fetch('gantt-template.xlsm');
+            if (!res.ok) throw new Error(`şablon indirilemedi (${res.status})`);
+            const { exportExcelGantt, excelFileName } = await import('./services/excelGanttService'); // JSZip yalnız gerekince yüklenir
+            const { data, warnings } = await exportExcelGantt(activeProject, processedTasks, await res.arrayBuffer());
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([data], { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' }));
+            link.download = excelFileName(activeProject);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            if (warnings.length) alert(`Excel Gantt oluşturuldu. Notlar:\n- ${warnings.slice(0, 8).join('\n- ')}${warnings.length > 8 ? `\n(+${warnings.length - 8} not)` : ''}`);
+        } catch (error) {
+            console.error("Failed to export Excel Gantt:", error);
+            alert(`Excel Gantt oluşturulamadı: ${error instanceof Error ? error.message : error}`);
+        }
+    }, [activeProject, processedTasks]);
+
     const handleExportGanttPdf = useCallback(async () => {
         if (!activeProject) {
             alert("Lütfen bir proje seçin.");
@@ -1847,6 +1888,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                 onExportXml={handleExportXml}
                 onExportJson={handleExportJson}
                 onExportGanttPdf={handleExportGanttPdf}
+                onExportExcel={handleExportExcel}
             />
             <div className="flex-grow flex overflow-hidden">
                 {renderMainView()}
@@ -1877,7 +1919,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                 ref={fileInputRef}
                 onChange={handleFileImport}
                 style={{ display: 'none' }}
-                accept=".xml,.json"
+                accept=".xml,.json,.xlsm,.xlsx"
             />
         </div>
     );

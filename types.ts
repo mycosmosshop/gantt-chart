@@ -79,6 +79,11 @@ export interface Task {
   baselineEnd: Date | null;
   baselineCost: number | null;
   baselineWork: number | null;
+  // Excel Gantt şablonu (PL130) sütunları: BH Responsible, BI Remarks, BG Report ("x" → Milestone Status)
+  responsible?: string;
+  remarks?: string;
+  report?: boolean;
+  wbsCode?: string; // Excel'den gelen özel WBS (ör. 1.2 = ML2); hiyerarşiyle tutarlıysa dışa aktarımda korunur
 }
 
 // This interface is for tasks after processing, adding hierarchy and financial info
@@ -196,6 +201,17 @@ export interface ProjectCharterData {
 }
 
 
+// Excel Gantt şablonundan gelen / şablona yazılan ve charter'da karşılığı olmayan künye
+export interface ExcelGanttMeta {
+  docNo?: string;        // BC1 (ör. PL130)
+  revNo?: string;        // BC2
+  subtitle?: string;     // C2
+  footerTitle?: string;  // altbilgi "PL130 Rev.xx - <footerTitle>"
+  msSubtitle?: string;   // Milestone Status A2
+  openIssues?: string;   // Milestone Status D8
+  timescale?: string;    // T4: Day / Week / Month / Year
+}
+
 export interface Project {
   id: string;
   tasks: Task[];
@@ -205,6 +221,7 @@ export interface Project {
   collapsedTasks?: number[];
   columnVisibility?: { [key: string]: boolean };
   themeName?: string;
+  excelMeta?: ExcelGanttMeta;
 }
 
 export interface ProjectTemplate {

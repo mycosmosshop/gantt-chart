@@ -27,6 +27,7 @@ interface ToolbarProps {
     onExportXml: () => void;
     onExportJson: () => void;
     onExportGanttPdf: () => void;
+    onExportExcel: () => void;
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({ 
@@ -53,6 +54,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
     onExportXml,
     onExportJson,
     onExportGanttPdf,
+    onExportExcel,
 }) => {
     const [openMenu, setOpenMenu] = useState<string | null>(null);
     const toolbarRef = useRef<HTMLDivElement>(null);
@@ -90,7 +92,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
                 <div className="flex items-center space-x-2">
                     <button onClick={() => onMainViewChange(MainView.Dashboard)} className="p-2 rounded-md hover:bg-gray-100 transition-colors" title="Yeni/Varolan Proje"><NewProjectIcon /></button>
                     <div className="h-6 w-px bg-gray-300"></div>
-                     <button onClick={onImport} className="p-2 rounded-md hover:bg-gray-100 transition-colors" title="İçe Aktar (XML, JSON)"><ImportIcon /></button>
+                     <button onClick={onImport} className="p-2 rounded-md hover:bg-gray-100 transition-colors" title="İçe Aktar (Excel Gantt .xlsm, XML, JSON)"><ImportIcon /></button>
                     <div className="relative">
                         <button onClick={() => toggleMenu('export')} className="p-2 rounded-md hover:bg-gray-100 transition-colors" title="Dışa Aktar"><ExportIcon /></button>
                         {openMenu === 'export' && (
@@ -99,6 +101,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
                                     <button onClick={() => { onExportXml(); setOpenMenu(null); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">Dışa Aktar (MS Project XML)</button>
                                     <button onClick={() => { onExportJson(); setOpenMenu(null); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">Dışa Aktar (JSON)</button>
                                     <button onClick={() => { onExportGanttPdf(); setOpenMenu(null); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">Dışa Aktar (PDF)</button>
+                                    <button onClick={() => { onExportExcel(); setOpenMenu(null); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer" title="PL130 Gantt şablonu: formüller, oklar, Milestone Status ve makrolar">Dışa Aktar (Excel Gantt .xlsm)</button>
                                 </div>
                             </div>
                         )}
