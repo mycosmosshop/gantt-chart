@@ -210,7 +210,7 @@ export const MilestoneIcon = () => (
 );
 
 export const WarningIcon = ({ className }: { className?: string }) => (
-    <svg {...smallIconProps} viewBox="0 0 24 24" fill="currentColor" className={className || "w-4 h-4 text-amber-400"}>
+    <svg {...smallIconProps} viewBox="0 0 24 24" fill="currentColor" stroke="none" className={className || "w-4 h-4 text-amber-400"}>
       <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"></path>
     </svg>
   );
