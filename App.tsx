@@ -19,7 +19,7 @@ import TrackingGanttView from './components/TrackingGanttView';
 import Dashboard from './components/Dashboard';
 import { Project, Task, ViewMode, ProcessedTask, TaskType, CalendarSettings, ProjectResource, ResourceType, MainView, ProjectCharterData, TeamMember, Milestone, ProjectTemplate, DependencyType } from './types';
 import { SAMPLE_PROJECT, DEFAULT_CALENDAR_SETTINGS, SAMPLE_RESOURCES, DEFAULT_COLUMN_VISIBILITY, SAMPLE_CHARTER, THEMES, BLANK_PROJECT, BLANK_CHARTER } from './constants';
-import { calculateCriticalPath, autoSchedule, processTaskHierarchy, calculateDuration, isWorkingDay, toDateString, addDays } from './services/ganttService';
+import { autoSchedule, processTaskHierarchy, calculateDuration, isWorkingDay, toDateString, addDays } from './services/ganttService';
 import { MOCK_RATES } from './services/currencyService';
 import { exportToXml, importFromXml } from './services/msprojectService';
 import { exportToJson, importFromJson } from './services/jsonService';
@@ -28,6 +28,7 @@ import { cloudFetchAll, cloudSaveProject, cloudSaveTemplates, cloudDeleteProject
 
 import * as d3 from 'd3';
 import { rowOrdinals, linkProblem } from './services/taskOps';
+import { computeCpm } from './services/cpm';
 import { pixelsPerDay, startOfDay, formatDate, formatMoney } from './components/ganttLayout';
 
 export const PROJECT_BASE_CURRENCY = 'TRY';
@@ -270,7 +271,6 @@ const App: React.FC = () => {
     // UI and view state (not project-specific)
     const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Week);
     const [mainView, setMainView] = useState<MainView>(MainView.Dashboard);
-    const [criticalPath, setCriticalPath] = useState<Set<number>>(new Set());
     const [showCriticalPath, setShowCriticalPath] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
     const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
@@ -765,12 +765,9 @@ const App: React.FC = () => {
 
     const processedTasks = useMemo(() => processTaskHierarchy(tasksWithCharterFixedCosts, calendarSettings, resources, allocationData, PROJECT_BASE_CURRENCY, MOCK_RATES), [tasksWithCharterFixedCosts, calendarSettings, resources, allocationData]);
     
-    useEffect(() => {
-        if(isLoaded && tasks.length > 0) {
-            const critPath = calculateCriticalPath(processedTasks, calendarSettings);
-            setCriticalPath(critPath);
-        }
-    }, [processedTasks, calendarSettings, isLoaded, tasks.length]);
+    // Kritik yol ve bolluklar (bağ türleri ve gecikmelerle, iş günü cinsinden)
+    const cpm = useMemo(() => computeCpm(processedTasks, calendarSettings), [processedTasks, calendarSettings]);
+    const criticalPath = cpm.critical;
 
     // Sync Gantt data to Project Charter (one-way)
     useEffect(() => {
@@ -2336,6 +2333,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                                 onContextMenu={(taskId, x, y) => setContextMenu({ taskId, x, y })}
                                 onQuickAdd={handleQuickAdd}
                                 criticalPath={showCriticalPath ? criticalPath : EMPTY_SET}
+                                slack={cpm.slack}
                                 onNotify={notify}
                             />
                         </div>
@@ -2365,6 +2363,8 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                                 theme={currentTheme}
                                 showProgress={showProgressOnBars}
                                 selectedIds={selectedIds}
+                                slack={cpm.slack}
+                                showSlack={showCriticalPath}
                                 onSelect={handleGanttSelect}
                                 onOpenTask={openTaskInfo}
                             />

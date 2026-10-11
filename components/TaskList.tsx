@@ -5,6 +5,7 @@ import { calculateDuration, isWorkingDay, toDateString, addDays, toInputDateStri
 import { COLUMNS_CONFIG } from '../constants';
 import { ROW_H, HEADER_H, formatDate, formatMoney } from './ganttLayout';
 import { rowOrdinals, formatPredecessors, parsePredecessors, linkProblem } from '../services/taskOps';
+import { SlackInfo } from '../services/cpm';
 
 interface TaskListProps {
     tasks: ProcessedTask[];
@@ -23,6 +24,7 @@ interface TaskListProps {
     onContextMenu: (taskId: number, x: number, y: number) => void;
     onQuickAdd: (name: string) => void;
     criticalPath: Set<number>;
+    slack: Map<number, SlackInfo>;
     onNotify: (message: string) => void;
 }
 
@@ -30,7 +32,7 @@ const EDITABLE = new Set(['taskName', 'start', 'end', 'duration', 'progress', 'p
 
 const TaskList: React.FC<TaskListProps> = (props) => {
     const { tasks, allTasks, resources, onUpdateTask, onToggleCollapse, onReorderTask, calendarSettings, allocationData,
-        columnVisibility, onColumnVisibilityChange, selectedIds, onSelect, onOpenTask, onContextMenu, onQuickAdd, criticalPath, onNotify } = props;
+        columnVisibility, onColumnVisibilityChange, selectedIds, onSelect, onOpenTask, onContextMenu, onQuickAdd, criticalPath, slack, onNotify } = props;
 
     const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
     const [dropTargetId, setDropTargetId] = useState<number | null>(null);
@@ -205,6 +207,13 @@ const TaskList: React.FC<TaskListProps> = (props) => {
                     </div>
                 );
             }
+            case 'totalSlack': case 'freeSlack': {
+                const info = slack.get(task.id);
+                if (!info) return '–';
+                const v = columnId === 'totalSlack' ? info.totalSlack : info.freeSlack;
+                return <span className={columnId === 'totalSlack' && v <= 0 ? 'text-red-600 font-medium' : ''}>{`${v} g`}</span>;
+            }
+            case 'lateFinish': { const info = slack.get(task.id); return info ? formatDate(info.lateFinish) : '–'; }
             case 'work': return `${task.work.toFixed(1)} sa`;
             case 'cost': case 'actualCost': case 'plannedValue': case 'earnedValue': case 'scheduleVariance': case 'costVariance': {
                 const v = task[columnId] as number;

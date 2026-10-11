@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
 import { ProcessedTask, ViewMode, DependencyType, Task, CalendarSettings, GanttTheme } from '../types';
 import { isWorkingDay, calculateDuration, addDays } from '../services/ganttService';
+import { SlackInfo } from '../services/cpm';
 import { ROW_H, HEADER_H, pixelsPerDay, timeTiers, startOfDay, endOfDayExclusive, formatDate, formatShortDate } from './ganttLayout';
 
 interface GanttChartProps {
@@ -18,6 +19,8 @@ interface GanttChartProps {
     theme: GanttTheme;
     showProgress: boolean;
     selectedIds: Set<number>;
+    slack: Map<number, SlackInfo>;
+    showSlack: boolean;
     onSelect: (taskId: number, additive: boolean) => void;
     onOpenTask: (taskId: number) => void;
 }
@@ -33,7 +36,7 @@ const solid = (v: string | [string, string] | undefined, fallback = '#64748b'): 
 
 const GanttChart: React.FC<GanttChartProps> = ({
     tasks, allTasks, viewMode, timeDomain, minWidth, onUpdateTask, onAddDependency, criticalPath,
-    calendarSettings, theme, showProgress, selectedIds, onSelect, onOpenTask, minHeight = 0,
+    calendarSettings, theme, showProgress, selectedIds, slack, showSlack, onSelect, onOpenTask, minHeight = 0,
 }) => {
     const headerRef = useRef<SVGSVGElement>(null);
     const bodyRef = useRef<SVGSVGElement>(null);
@@ -76,7 +79,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
                 g.append('line').attr('x1', timeScale(e)).attr('x2', timeScale(e)).attr('y1', y).attr('y2', y + h).attr('stroke', '#e2e8f0');
                 const label = tier.format(s);
                 const w = xe - xs;
-                if (w < 14) return;
+                if (w < 14 || (bold && w < label.length * 7 + 10)) return;
                 g.append('text')
                     .attr('x', bold ? xs + 6 : xs + w / 2)
                     .attr('y', y + h / 2 + 4)
@@ -131,7 +134,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
         // Zemin + çalışılmayan günler
         svg.append('rect').attr('width', chartWidth).attr('height', bodyHeight).attr('fill', '#ffffff');
         const nonWork = svg.append('g');
-        if (ppd >= 3) {
+        if (ppd >= 10) {
             for (let d = startOfDay(x0); d < x1; d = d3.timeDay.offset(d, 1)) {
                 if (!isWorkingDay(d, calendarSettings)) {
                     nonWork.append('rect').attr('x', timeScale(d)).attr('y', 0).attr('width', ppd).attr('height', bodyHeight).attr('fill', '#f1f5f9');
@@ -223,6 +226,17 @@ const GanttChart: React.FC<GanttChartProps> = ({
                 g.append('rect').attr('x', bx).attr('y', BAR_Y + BAR_H + 1).attr('width', bw).attr('height', 3).attr('rx', 1.5).attr('fill', '#94a3b8');
             }
 
+            // Bolluk çubuğu (kritik yol açıkken): bitişten en geç bitişe ince çizgi
+            const sl = showSlack && !d.isSummary ? slack.get(d.id) : undefined;
+            if (sl && sl.totalSlack > 0) {
+                const x2 = timeScale(endOfDayExclusive(sl.lateFinish)) - xStart(d);
+                const x1 = isPointMilestone(d) ? ppd / 2 + BAR_H / 2 : w;
+                if (x2 > x1 + 2) {
+                    g.append('line').attr('x1', x1).attr('x2', x2).attr('y1', ROW_H / 2).attr('y2', ROW_H / 2).attr('stroke', '#14b8a6').attr('stroke-width', 2).attr('stroke-dasharray', '2,2').attr('pointer-events', 'none');
+                    g.append('line').attr('x1', x2).attr('x2', x2).attr('y1', ROW_H / 2 - 4).attr('y2', ROW_H / 2 + 4).attr('stroke', '#14b8a6').attr('stroke-width', 2).attr('pointer-events', 'none');
+                }
+            }
+
             if (d.isSummary) {
                 // MS Project tarzı özet çubuğu: ince gövde + uçlarda aşağı bakan tırnak
                 const color = crit ? solid(theme.colors.criticalPath) : '#334155';
@@ -295,7 +309,8 @@ const GanttChart: React.FC<GanttChartProps> = ({
                       <span>Tamamlanma</span><span class="text-slate-900">%${d.progress}</span>
                       ${d.baselineStart ? `<span>Temel plan</span><span class="text-slate-900">${formatDate(d.baselineStart)} – ${formatDate(d.baselineEnd)}</span>` : ''}
                     </div>
-                    ${crit ? '<div class="mt-1.5 text-red-600 font-medium">Kritik yolda</div>' : ''}
+                    ${(() => { const sl = slack.get(d.id); return sl && !d.isSummary ? `<div class="mt-1.5 text-slate-600">Toplam bolluk: <b class="${sl.totalSlack <= 0 ? 'text-red-600' : 'text-slate-900'}">${sl.totalSlack} g</b> · Serbest: <b class="text-slate-900">${sl.freeSlack} g</b></div>` : ''; })()}
+                    ${crit ? '<div class="mt-1 text-red-600 font-medium">Kritik yolda</div>' : ''}
                     ${d.isOverdue ? '<div class="mt-1 text-amber-600 font-medium">Gecikmede</div>' : ''}`);
         };
         bars.on('mouseenter', function (this: SVGGElement, event: MouseEvent, d: ProcessedTask) {
@@ -407,7 +422,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
             const t = tasks[i];
             if (t) onSelect(t.id, event.ctrlKey || event.metaKey || event.shiftKey);
         });
-    }, [tasks, allById, rowIndex, timeScale, chartWidth, bodyHeight, ppd, viewMode, criticalPath, calendarSettings, theme, showProgress, selectedIds, onSelect, onOpenTask, onUpdateTask, onAddDependency]);
+    }, [tasks, allById, rowIndex, timeScale, chartWidth, bodyHeight, ppd, viewMode, criticalPath, calendarSettings, theme, showProgress, selectedIds, slack, showSlack, onSelect, onOpenTask, onUpdateTask, onAddDependency]);
 
     return (
         <div ref={wrapRef} className="relative" style={{ width: chartWidth }}>
