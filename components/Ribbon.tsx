@@ -160,6 +160,7 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
 
     const timeView = [MainView.Gantt, MainView.TrackingGantt, MainView.ResourceUsage, MainView.TeamPlanner].includes(p.mainView);
     const taskView = p.mainView === MainView.Gantt;
+    const isDash = p.mainView === MainView.Dashboard; // panoda projeye özgü komutlar gizlenir
     const sel = p.selectionCount;
     const title = p.activeProject.charter.projectTitle || 'Adsız proje';
 
@@ -167,10 +168,11 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
         <div ref={ref} className="flex-shrink-0 bg-white border-b border-slate-200 text-slate-700 select-none">
             {/* Üst şerit: proje + görünüm sekmeleri */}
             <div className="flex items-center gap-2 h-11 px-3 border-b border-slate-100">
-                <button onClick={p.onOpenDashboard} title="Tüm projeler" className="inline-flex items-center gap-1.5 h-8 rounded-md px-2 text-slate-600 hover:bg-slate-100">
+                <button onClick={p.onOpenDashboard} title="Tüm projeler" className={`inline-flex items-center gap-1.5 h-8 rounded-md px-2 hover:bg-slate-100 ${isDash ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600'}`}>
                     <Icon name="grid" />
                     <span className="text-[13px] hidden xl:inline">Projeler</span>
                 </button>
+                {!isDash && (
                 <Menu id="project" open={open} setOpen={setOpen} button={
                     <button className="inline-flex items-center gap-1.5 h-8 max-w-[300px] rounded-md px-2 hover:bg-slate-100" title="Proje değiştir">
                         <Icon name="folder" className="w-4 h-4 text-blue-600 flex-shrink-0" />
@@ -191,6 +193,7 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
                     <MenuItem onClick={p.onNewProject}>+ Yeni proje</MenuItem>
                     <MenuItem onClick={p.onOpenDashboard}>Proje paneli ve şablonlar</MenuItem>
                 </Menu>
+                )}
 
                 <nav className="flex items-center gap-0.5 ml-2 overflow-x-auto">
                     {VIEW_TABS.map(t => (
@@ -201,7 +204,7 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
                     ))}
                 </nav>
 
-                <div className="ml-auto flex items-center gap-1">
+                {!isDash && <div className="ml-auto flex items-center gap-1">
                     <Btn icon="undo" title="Geri al (Ctrl+Z)" onClick={p.onUndo} disabled={!p.canUndo} />
                     <Btn icon="redo" title="Yinele (Ctrl+Y)" onClick={p.onRedo} disabled={!p.canRedo} />
                     <Sep />
@@ -213,11 +216,11 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
                         <MenuItem onClick={p.onExportJson} hint=".json">Yedek (JSON)</MenuItem>
                     </Menu>
                     <Btn icon="help" title="Klavye kısayolları (?)" onClick={p.onShowShortcuts} />
-                </div>
+                </div>}
             </div>
 
             {/* Komut şeridi */}
-            <div className="flex items-center h-11 px-2 overflow-x-auto">
+            {!isDash && <div className="flex items-center h-11 px-2 overflow-x-auto">
                 {taskView && (
                     <>
                         <Btn icon="plus" label="Görev" title="Seçili görevin altına yeni görev ekle (Insert)" onClick={p.onAddTask} tone="primary" />
@@ -279,7 +282,7 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
                     <Btn icon="calendar" label="Çalışma takvimi" xwide title="Çalışma günleri, tatiller, günlük saat" onClick={p.onOpenCalendar} />
                     <Btn icon="report" label="Maliyet" xwide title="Maliyet raporu" onClick={p.onOpenReport} />
                 </div>
-            </div>
+            </div>}
         </div>
     );
 };

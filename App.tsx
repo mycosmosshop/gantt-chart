@@ -2379,6 +2379,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                             onCreateTemplate={handleCreateTemplate}
                             onDeleteTemplate={handleDeleteTemplate}
                             onCreateProjectFromTemplate={handleCreateProjectFromTemplate}
+                            activeProjectId={activeProjectId}
                         />;
             case MainView.Calendar:
                 return <CalendarView 
@@ -2506,7 +2507,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             <div className="flex-grow flex overflow-hidden">
                 {renderMainView()}
             </div>
-            <StatusBar summary={projectSummary} autoSchedule={calendarSettings.autoScheduleEnabled !== false} selection={selectedIds.size} />
+            {mainView !== MainView.Dashboard && <StatusBar summary={projectSummary} autoSchedule={calendarSettings.autoScheduleEnabled !== false} selection={selectedIds.size} />}
             {taskDialog && (
                 <TaskModal
                     task={taskDialog.mode === 'edit' ? processedTasks.find(t => t.id === taskDialog.taskId) || null : null}
