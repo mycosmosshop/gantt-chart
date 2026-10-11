@@ -5,7 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 import Ribbon, { Icon } from './components/Ribbon';
 import TaskModal from './components/TaskModal';
 import TaskList from './components/TaskList';
-import GanttChart from './components/GanttChart';
+import GanttChart, { BarLabelMode } from './components/GanttChart';
+import TimelineBand, { timelineTaskIds } from './components/TimelineBand';
 import CalendarModal from './components/CalendarModal';
 import ResourceSheet from './components/ResourceSheet';
 import ResourceUsageView from './components/ResourceUsageView';
@@ -15,7 +16,6 @@ import NetworkDiagramView from './components/NetworkDiagramView';
 import TimelineView from './components/TimelineView';
 import CostReportModal from './components/CostReportModal';
 import ProjectCharter from './components/ProjectCharter';
-import TrackingGanttView from './components/TrackingGanttView';
 import Dashboard from './components/Dashboard';
 import { Project, Task, ViewMode, ProcessedTask, TaskType, CalendarSettings, ProjectResource, ResourceType, MainView, ProjectCharterData, TeamMember, Milestone, ProjectTemplate, DependencyType } from './types';
 import { SAMPLE_PROJECT, DEFAULT_CALENDAR_SETTINGS, SAMPLE_RESOURCES, DEFAULT_COLUMN_VISIBILITY, SAMPLE_CHARTER, THEMES, BLANK_PROJECT, BLANK_CHARTER } from './constants';
@@ -181,7 +181,7 @@ const StatusBar: React.FC<{ summary: ProjectSummary; autoSchedule: boolean; sele
 
 const TaskContextMenu: React.FC<{
     x: number; y: number; task: ProcessedTask | null; selectionCount: number; onClose: () => void;
-    actions: { info: () => void; addBelow: () => void; addChild: () => void; indent: () => void; outdent: () => void; link: () => void; unlink: () => void; setProgress: (p: number) => void; remove: () => void };
+    actions: { timeline: () => void; info: () => void; addBelow: () => void; addChild: () => void; indent: () => void; outdent: () => void; link: () => void; unlink: () => void; setProgress: (p: number) => void; remove: () => void };
 }> = ({ x, y, task, selectionCount, onClose, actions }) => {
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -208,6 +208,7 @@ const TaskContextMenu: React.FC<{
             <Item onClick={actions.outdent} icon="outdent" hint="Alt+Shift+←" disabled={task.parentId === null}>Çıkıntı</Item>
             <Item onClick={actions.link} icon="link" hint="Ctrl+F2" disabled={selectionCount < 2}>Seçilenleri bağla</Item>
             <Item onClick={actions.unlink} icon="unlink">Bağları kaldır</Item>
+            <Item onClick={actions.timeline} icon="timeline">Zaman çizelgesine ekle / çıkar</Item>
             {!task.isSummary && (
                 <>
                     <div className="my-1 border-t border-slate-100" />
@@ -289,6 +290,16 @@ const App: React.FC = () => {
     const [contextMenu, setContextMenu] = useState<null | { x: number; y: number; taskId: number }>(null);
     const [toast, setToast] = useState<string | null>(null);
     const [showShortcuts, setShowShortcuts] = useState(false);
+    // Görünüm tercihleri (cihaz-yerel)
+    const readPref = <T,>(key: string, fallback: T): T => { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } };
+    const [showTimelineDock, setShowTimelineDock] = useState<boolean>(() => readPref('ganttShowTimeline', true));
+    const [barLabel, setBarLabel] = useState<BarLabelMode>(() => readPref('ganttBarLabel', 'resources'));
+    const [trackingColumns, setTrackingColumns] = useState<{ [k: string]: boolean }>(() => readPref('ganttTrackingColumns', {
+        statusIndicator: true, duration: false, predecessors: false, resources: false, progress: true,
+        baselineStart: true, baselineEnd: true, startVariance: false, finishVariance: true,
+    }));
+    useEffect(() => { try { localStorage.setItem('ganttTrackingColumns', JSON.stringify(trackingColumns)); } catch { /* yok */ } }, [trackingColumns]);
+    useEffect(() => { try { localStorage.setItem('ganttShowTimeline', JSON.stringify(showTimelineDock)); localStorage.setItem('ganttBarLabel', JSON.stringify(barLabel)); } catch { /* yok */ } }, [showTimelineDock, barLabel]);
     const [ganttViewport, setGanttViewport] = useState({ width: 800, height: 600 });
 
     // Undo/Redo state
@@ -764,6 +775,7 @@ const App: React.FC = () => {
     }, [tasks, resources, calendarSettings, timeDomain]);
 
     const processedTasks = useMemo(() => processTaskHierarchy(tasksWithCharterFixedCosts, calendarSettings, resources, allocationData, PROJECT_BASE_CURRENCY, MOCK_RATES), [tasksWithCharterFixedCosts, calendarSettings, resources, allocationData]);
+    const processedById = useMemo(() => new Map<number, ProcessedTask>(processedTasks.map(t => [t.id, t])), [processedTasks]);
     
     // Kritik yol ve bolluklar (bağ türleri ve gecikmelerle, iş günü cinsinden)
     const cpm = useMemo(() => computeCpm(processedTasks, calendarSettings), [processedTasks, calendarSettings]);
@@ -1191,16 +1203,20 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
     };
 
     const handleSetBaseline = useCallback(() => {
-        if (window.confirm("Are you sure you want to set the current plan as the baseline? This will overwrite any existing baseline data.")) {
+        if (window.confirm("Şimdiki plan temel plan olarak kaydedilsin mi? Varsa önceki temel plan üzerine yazılır.")) {
             performUndoableAction(project => ({
                 ...project,
-                tasks: project.tasks.map(t => ({ ...t, baselineStart: t.start, baselineEnd: t.end, baselineCost: t.cost, baselineWork: t.work }))
+                // Özet görevler için alt görevlerden hesaplanmış (görünen) tarih/maliyet kaydedilir
+                tasks: project.tasks.map(t => {
+                    const pt = processedById.get(t.id);
+                    return { ...t, baselineStart: pt ? pt.start : t.start, baselineEnd: pt ? pt.end : t.end, baselineCost: pt ? pt.cost : t.cost, baselineWork: pt ? pt.work : t.work };
+                })
             }));
         }
-    }, [performUndoableAction]);
+    }, [performUndoableAction, processedById]);
     
     const handleClearBaseline = useCallback(() => {
-        if (window.confirm("Are you sure you want to clear the baseline data? This action cannot be undone.")) {
+        if (window.confirm("Temel plan silinsin mi? (Geri al ile geri getirebilirsiniz.)")) {
             performUndoableAction(project => ({
                 ...project,
                 tasks: project.tasks.map(t => ({ ...t, baselineStart: null, baselineEnd: null, baselineCost: null, baselineWork: null }))
@@ -2128,8 +2144,8 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
     // Ölçek değişince seçili göreve ya da bugüne odaklan
     const didInitialScrollRef = useRef<string | null>(null);
     useEffect(() => {
-        if (mainView !== MainView.Gantt || !activeProjectId) return;
-        const key = `${activeProjectId}:${viewMode}`;
+        if ((mainView !== MainView.Gantt && mainView !== MainView.TrackingGantt) || !activeProjectId) return;
+        const key = `${activeProjectId}:${mainView}:${viewMode}`;
         if (didInitialScrollRef.current === key) return;
         didInitialScrollRef.current = key;
         requestAnimationFrame(() => {
@@ -2200,6 +2216,41 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
     }, [taskDialog, isCalendarModalOpen, isResourceSheetOpen, isReportModalOpen, mainView, visibleTasks, processedTasks, collapsedTasks, handleUndo, handleRedo,
         insertNewTask, deleteSelected, indentSelected, outdentSelected, linkSelected, unlinkSelected, firstSelectedId, openTaskInfo, handleSelect, toggleTaskCollapse]);
 
+    // Zaman çizelgesi: hangi görevler şeritte görünsün (boş küme → varsayılan seçim)
+    const handleSetTimelineTasks = useCallback((ids: Set<number>) => {
+        performUndoableAction(p => ({
+            ...p,
+            tasks: p.tasks.map(t => {
+                const want = ids.size ? (ids.has(t.id) ? true : false) : undefined;
+                if (t.showOnTimeline === want) return t;
+                const { showOnTimeline, ...rest } = t;
+                return want === undefined ? rest as Task : { ...rest, showOnTimeline: want };
+            }),
+        }));
+    }, [performUndoableAction]);
+    const timelineIds = useMemo(() => timelineTaskIds(tasks), [tasks]);
+    const toggleTimelineForSelection = useCallback(() => {
+        setContextMenu(null);
+        const sel = orderedSelection.map(t => t.id);
+        if (!sel.length) return;
+        const next = new Set(timelineIds);
+        const allIn = sel.every(id => next.has(id));
+        sel.forEach(id => (allIn ? next.delete(id) : next.add(id)));
+        if (next.size === 0) next.add(-1); // hepsi çıkarıldıysa varsayılana dönmesin
+        handleSetTimelineTasks(next);
+        notify(allIn ? 'Zaman çizelgesinden çıkarıldı.' : 'Zaman çizelgesine eklendi.');
+    }, [orderedSelection, timelineIds, handleSetTimelineTasks, notify]);
+
+    // Çubuk etiketi için görev → kaynak adları
+    const resourceNamesByTask = useMemo(() => {
+        const byId = new Map<string, ProjectResource>(resources.map(r => [r.id, r]));
+        return new Map<number, string>(processedTasks.map(t => [t.id, t.resourceAssignments.map(ra => {
+            const r = byId.get(ra.resourceId);
+            if (!r) return '';
+            return r.type === ResourceType.Work && ra.value !== 100 ? `${r.name}[%${ra.value}]` : r.name;
+        }).filter(Boolean).join('; ')]));
+    }, [processedTasks, resources]);
+
     // Durum çubuğu özeti
     const projectSummary = useMemo(() => {
         const leaves = processedTasks.filter(t => !t.isSummary);
@@ -2234,83 +2285,23 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                 />;
     }
 
-    const renderMainView = () => {
-        switch (mainView) {
-            case MainView.Dashboard:
-                return <Dashboard 
-                            allProjects={allProjects}
-                            onSelectProject={handleSelectProject}
-                            onNewProject={handleCreateNewProject}
-                            onDeleteProject={handleDeleteProject}
-                            templates={templates}
-                            onCreateTemplate={handleCreateTemplate}
-                            onDeleteTemplate={handleDeleteTemplate}
-                            onCreateProjectFromTemplate={handleCreateProjectFromTemplate}
-                        />;
-            case MainView.Calendar:
-                return <CalendarView 
-                            tasks={processedTasks} 
-                            calendarSettings={calendarSettings} 
-                            resources={resources}
-                            allocationData={allocationData}
-                            materialAllocationData={materialAllocationData}
-                            costAllocationData={costAllocationData}
-                        />;
-            case MainView.Network:
-                return <NetworkDiagramView tasks={processedTasks} criticalPath={showCriticalPath ? criticalPath : new Set()} calendarSettings={calendarSettings} charter={projectCharter} />;
-            case MainView.Timeline:
-                return <TimelineView 
-                            tasks={processedTasks} 
-                            viewMode={viewMode} 
-                            criticalPath={showCriticalPath ? criticalPath : new Set()} 
-                            calendarSettings={calendarSettings}
-                        />;
-            case MainView.ResourceUsage:
-                return <ResourceUsageView 
-                            tasks={processedTasks} 
-                            resources={resources} 
-                            viewMode={viewMode} 
-                            calendarSettings={calendarSettings}
-                            allocationData={allocationData}
-                            materialAllocationData={materialAllocationData}
-                            costAllocationData={costAllocationData}
-                            timeDomain={timeDomain}
-                        />;
-            case MainView.TeamPlanner:
-                return <TeamPlannerView 
-                            tasks={processedTasks} 
-                            resources={resources} 
-                            calendarSettings={calendarSettings}
-                            allocationData={allocationData}
-                            onReassignTask={handleReassignTask}
-                            onUpdateTask={handleUpdateTask}
-                            onAcknowledgeOvertime={handleAcknowledgeOvertime}
-                        />;
-            case MainView.TrackingGantt:
-                return <TrackingGanttView
-                            tasks={processedTasks}
-                            viewMode={viewMode}
-                            calendarSettings={calendarSettings}
-                            timeDomain={timeDomain}
-                        />;
-            case MainView.ProjectCharter:
-                return (
-                    <div className="flex-grow overflow-auto">
-                         <ProjectCharter 
-                            charterData={projectCharter} 
-                            onSave={handleSaveCharter}
-                            tasks={processedTasks}
-                            resources={resources}
-                            calculatedCosts={budgetCalculatedCosts}
-                            allocationData={allocationData}
-                            calendarSettings={calendarSettings}
-                        />
-                    </div>
-                );
-            case MainView.Gantt:
-            default:
-                return (
-                    <>
+    // Gantt ve İzleme Gantt'ı aynı tablo + çizim düzenini kullanır
+    const renderGanttWorkspace = (mode: 'gantt' | 'tracking') => (
+                    <div className="flex-grow flex flex-col overflow-hidden min-w-0">
+                        {mode === 'gantt' && showTimelineDock && (
+                            <div className="flex-shrink-0 border-b border-slate-200 bg-white px-1 pt-1 relative group">
+                                <TimelineBand compact tasks={processedTasks} shownIds={timelineIds} criticalPath={showCriticalPath ? criticalPath : EMPTY_SET}
+                                    selectedIds={selectedIds} onSelect={(id) => handleSelect(id, 'single')} onOpenTask={openTaskInfo} />
+                                <button onClick={() => setMainView(MainView.Timeline)} className="absolute right-2 top-1 text-[11px] text-slate-400 hover:text-blue-700 opacity-0 group-hover:opacity-100" title="Zaman çizelgesinde hangi görevlerin görüneceğini seçin">Düzenle</button>
+                            </div>
+                        )}
+                        {mode === 'tracking' && !tasks.some(t => t.baselineStart) && (
+                            <div className="flex-shrink-0 flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-900">
+                                <span>Bu projede temel plan yok. Sapmaları görmek için şimdiki planı temel plan olarak kaydedin.</span>
+                                <button onClick={handleSetBaseline} className="h-7 rounded-md bg-amber-600 px-3 text-[12px] font-medium text-white hover:bg-amber-700">Temel planı kaydet</button>
+                            </div>
+                        )}
+                        <div className="flex-grow flex overflow-hidden">
                         <div
                             ref={sidebarRef}
                             onScroll={() => handleScroll('sidebar')}
@@ -2325,8 +2316,8 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                                 onReorderTask={handleReorderTask}
                                 calendarSettings={calendarSettings}
                                 allocationData={allocationData}
-                                columnVisibility={columnVisibility}
-                                onColumnVisibilityChange={onColumnVisibilityChange}
+                                columnVisibility={mode === 'tracking' ? trackingColumns : columnVisibility}
+                                onColumnVisibilityChange={mode === 'tracking' ? setTrackingColumns : onColumnVisibilityChange}
                                 selectedIds={selectedIds}
                                 onSelect={handleSelect}
                                 onOpenTask={openTaskInfo}
@@ -2367,10 +2358,91 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                                 showSlack={showCriticalPath}
                                 onSelect={handleGanttSelect}
                                 onOpenTask={openTaskInfo}
+                                barLabel={barLabel}
+                                mode={mode}
+                                resourceNames={resourceNamesByTask}
                             />
                         </div>
-                    </>
+                        </div>
+                    </div>
+    );
+
+    const renderMainView = () => {
+        switch (mainView) {
+            case MainView.Dashboard:
+                return <Dashboard 
+                            allProjects={allProjects}
+                            onSelectProject={handleSelectProject}
+                            onNewProject={handleCreateNewProject}
+                            onDeleteProject={handleDeleteProject}
+                            templates={templates}
+                            onCreateTemplate={handleCreateTemplate}
+                            onDeleteTemplate={handleDeleteTemplate}
+                            onCreateProjectFromTemplate={handleCreateProjectFromTemplate}
+                        />;
+            case MainView.Calendar:
+                return <CalendarView 
+                            tasks={processedTasks} 
+                            calendarSettings={calendarSettings} 
+                            resources={resources}
+                            allocationData={allocationData}
+                            materialAllocationData={materialAllocationData}
+                            costAllocationData={costAllocationData}
+                        />;
+            case MainView.Network:
+                return <NetworkDiagramView tasks={processedTasks} criticalPath={showCriticalPath ? criticalPath : new Set()} calendarSettings={calendarSettings} charter={projectCharter} />;
+            case MainView.Timeline:
+                return <TimelineView
+                            tasks={processedTasks}
+                            criticalPath={showCriticalPath ? criticalPath : EMPTY_SET}
+                            selectedIds={selectedIds}
+                            onSelect={(id) => handleSelect(id, 'single')}
+                            onOpenTask={openTaskInfo}
+                            onSetTimelineTasks={handleSetTimelineTasks}
+                        />;
+            case MainView.ResourceUsage:
+                return <ResourceUsageView 
+                            tasks={processedTasks} 
+                            resources={resources} 
+                            viewMode={viewMode} 
+                            calendarSettings={calendarSettings}
+                            allocationData={allocationData}
+                            materialAllocationData={materialAllocationData}
+                            costAllocationData={costAllocationData}
+                            timeDomain={timeDomain}
+                        />;
+            case MainView.TeamPlanner:
+                return <TeamPlannerView
+                            tasks={processedTasks}
+                            resources={resources}
+                            calendarSettings={calendarSettings}
+                            allocationData={allocationData}
+                            viewMode={viewMode}
+                            timeDomain={timeDomain}
+                            onReassignTask={handleReassignTask}
+                            onUpdateTask={handleUpdateTask}
+                            onAcknowledgeOvertime={handleAcknowledgeOvertime}
+                            onOpenTask={openTaskInfo}
+                        />;
+            case MainView.TrackingGantt:
+                return renderGanttWorkspace('tracking');
+            case MainView.ProjectCharter:
+                return (
+                    <div className="flex-grow overflow-auto">
+                         <ProjectCharter 
+                            charterData={projectCharter} 
+                            onSave={handleSaveCharter}
+                            tasks={processedTasks}
+                            resources={resources}
+                            calculatedCosts={budgetCalculatedCosts}
+                            allocationData={allocationData}
+                            calendarSettings={calendarSettings}
+                        />
+                    </div>
                 );
+            case MainView.Gantt:
+            default:
+                return renderGanttWorkspace('gantt');
         }
     };
 
@@ -2426,6 +2498,10 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                 onExportPdf={handleExportGanttPdf}
                 onExportExcel={handleExportExcel}
                 onShowShortcuts={() => setShowShortcuts(true)}
+                showTimeline={showTimelineDock}
+                onToggleTimeline={() => setShowTimelineDock(v => !v)}
+                barLabel={barLabel}
+                onBarLabelChange={setBarLabel}
             />
             <div className="flex-grow flex overflow-hidden">
                 {renderMainView()}
@@ -2459,6 +2535,7 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
                         link: linkSelected,
                         unlink: unlinkSelected,
                         setProgress: setProgressSelected,
+                        timeline: toggleTimelineForSelection,
                         remove: deleteSelected,
                     }}
                 />

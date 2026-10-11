@@ -32,6 +32,8 @@ const PATHS: { [k: string]: string } = {
     folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
     zoomIn: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3M11 8v6M8 11h6',
     zoomOut: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3M8 11h6',
+    timeline: 'M3 12h18M3 6h8M13 18h8M7 3v6M17 15v6',
+    tag: 'M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8zM7 7h.01',
     help: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
 };
 export const Icon: React.FC<{ name: string; className?: string }> = ({ name, className = 'w-4 h-4' }) => (
@@ -108,15 +110,20 @@ export interface RibbonProps {
     onExportPdf: () => void;
     onExportExcel: () => void;
     onShowShortcuts: () => void;
+    showTimeline: boolean;
+    onToggleTimeline: () => void;
+    barLabel: 'resources' | 'name' | 'both' | 'none';
+    onBarLabelChange: (m: 'resources' | 'name' | 'both' | 'none') => void;
 }
 
-const Btn: React.FC<{ icon: string; label?: string; title: string; onClick: () => void; disabled?: boolean; active?: boolean; tone?: 'danger' | 'primary' }> =
-    ({ icon, label, title, onClick, disabled, active, tone }) => (
+// wide: etiket yalnız geniş ekranda görünür (dar ekranda simge + ipucu)
+const Btn: React.FC<{ icon: string; label?: string; title: string; onClick: () => void; disabled?: boolean; active?: boolean; tone?: 'danger' | 'primary'; wide?: boolean; xwide?: boolean }> =
+    ({ icon, label, title, onClick, disabled, active, tone, wide, xwide }) => (
         <button onClick={onClick} disabled={disabled} title={title}
             className={`inline-flex items-center gap-1.5 h-8 rounded-md px-2 text-[13px] whitespace-nowrap transition-colors disabled:opacity-35 disabled:cursor-not-allowed
                 ${active ? 'bg-blue-100 text-blue-800 ring-1 ring-inset ring-blue-200' : tone === 'primary' ? 'bg-blue-600 text-white hover:bg-blue-700' : tone === 'danger' ? 'text-red-600 hover:bg-red-50' : 'text-slate-700 hover:bg-slate-100'}`}>
             <Icon name={icon} />
-            {label && <span>{label}</span>}
+            {label && <span className={xwide ? 'hidden min-[1760px]:inline' : wide ? 'hidden xl:inline' : ''}>{label}</span>}
         </button>
     );
 
@@ -151,7 +158,7 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
         return () => document.removeEventListener('click', close);
     }, []);
 
-    const timeView = [MainView.Gantt, MainView.TrackingGantt, MainView.ResourceUsage, MainView.Timeline].includes(p.mainView);
+    const timeView = [MainView.Gantt, MainView.TrackingGantt, MainView.ResourceUsage, MainView.TeamPlanner].includes(p.mainView);
     const taskView = p.mainView === MainView.Gantt;
     const sel = p.selectionCount;
     const title = p.activeProject.charter.projectTitle || 'Adsız proje';
@@ -214,25 +221,25 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
                 {taskView && (
                     <>
                         <Btn icon="plus" label="Görev" title="Seçili görevin altına yeni görev ekle (Insert)" onClick={p.onAddTask} tone="primary" />
-                        <Btn icon="subtask" label="Alt görev" title="Seçili görevin altına alt görev ekle" onClick={p.onAddSubtask} disabled={sel !== 1} />
-                        <Btn icon="milestone" label="Kilometre taşı" title="Kilometre taşı ekle" onClick={p.onAddMilestone} />
+                        <Btn icon="subtask" label="Alt görev" wide title="Seçili görevin altına alt görev ekle" onClick={p.onAddSubtask} disabled={sel !== 1} />
+                        <Btn icon="milestone" label="Kilometre taşı" wide title="Kilometre taşı ekle" onClick={p.onAddMilestone} />
                         <Sep />
                         <Btn icon="outdent" title="Çıkıntı: bir üst seviyeye taşı (Alt+Shift+←)" onClick={p.onOutdent} disabled={!p.canOutdent} />
                         <Btn icon="indent" title="Girinti: üstteki görevin alt görevi yap (Alt+Shift+→)" onClick={p.onIndent} disabled={!p.canIndent} />
                         <Btn icon="link" label="Bağla" title="Seçili görevleri sırayla bağla, Bitiş → Başlangıç (Ctrl+F2)" onClick={p.onLink} disabled={!p.canLink} />
                         <Btn icon="unlink" title="Seçili görevler arasındaki bağları kaldır (Ctrl+Shift+F2)" onClick={p.onUnlink} disabled={!p.canUnlink} />
                         <Sep />
-                        <Btn icon="info" label="Bilgi" title="Görev bilgileri (Shift+F2 ya da çift tık)" onClick={p.onTaskInfo} disabled={sel !== 1} />
+                        <Btn icon="info" label="Bilgi" wide title="Görev bilgileri (Shift+F2 ya da çift tık)" onClick={p.onTaskInfo} disabled={sel !== 1} />
                         <Btn icon="trash" title="Seçili görevleri sil (Delete)" onClick={p.onDelete} disabled={sel === 0} tone="danger" />
                         <Sep />
-                        <Btn icon="auto" label="Otomatik" title={p.autoSchedule ? 'Otomatik zamanlama AÇIK: tarih değişince bağlı görevler kayar' : 'Otomatik zamanlama KAPALI: tarihler elle sabit'} onClick={p.onToggleAutoSchedule} active={p.autoSchedule} />
+                        <Btn icon="auto" label="Otomatik" wide title={p.autoSchedule ? 'Otomatik zamanlama AÇIK: tarih değişince bağlı görevler kayar' : 'Otomatik zamanlama KAPALI: tarihler elle sabit'} onClick={p.onToggleAutoSchedule} active={p.autoSchedule} />
                     </>
                 )}
-                {(taskView || p.mainView === MainView.Network || p.mainView === MainView.Timeline) && (
+                {(taskView || p.mainView === MainView.TrackingGantt || p.mainView === MainView.Network || p.mainView === MainView.Timeline) && (
                     <Btn icon="critical" label="Kritik yol" title="Kritik yolu vurgula" onClick={p.onToggleCritical} active={p.showCritical} />
                 )}
-                {taskView && (
-                    <Menu id="baseline" open={open} setOpen={setOpen} button={<Btn icon="baseline" label="Temel plan" title="Temel plan (baseline)" onClick={() => undefined} active={p.hasBaseline} />}>
+                {(taskView || p.mainView === MainView.TrackingGantt) && (
+                    <Menu id="baseline" open={open} setOpen={setOpen} button={<Btn icon="baseline" label="Temel plan" wide title="Temel plan (baseline)" onClick={() => undefined} active={p.hasBaseline} />}>
                         <MenuItem onClick={p.onSetBaseline}>Şimdiki planı temel plan olarak kaydet</MenuItem>
                         <MenuItem onClick={p.onClearBaseline} danger>Temel planı temizle</MenuItem>
                     </Menu>
@@ -248,22 +255,29 @@ const Ribbon: React.FC<RibbonProps> = (p) => {
                                 </button>
                             ))}
                         </div>
-                        <Btn icon="today" label="Bugün" title="Bugüne git" onClick={p.onGoToday} />
+                        {(taskView || p.mainView === MainView.TrackingGantt) && <Btn icon="today" label="Bugün" wide title="Bugüne git" onClick={p.onGoToday} />}
                         {taskView && <Btn icon="target" title="Seçili göreve kaydır" onClick={p.onGoToSelected} disabled={sel === 0} />}
                     </>
                 )}
                 {taskView && (
                     <>
+                        <Btn icon="timeline" label="Zaman çizelgesi" title="Gantt'ın üstünde zaman çizelgesi şeridini göster/gizle" onClick={p.onToggleTimeline} active={p.showTimeline} />
+                        <Menu id="labels" open={open} setOpen={setOpen} button={<Btn icon="tag" title="Çubuk etiketleri" onClick={() => undefined} />}>
+                            <div className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Çubuğun yanında</div>
+                            {([['resources', 'Kaynak adları (MS Project)'], ['name', 'Görev adı'], ['both', 'Görev adı + kaynaklar'], ['none', 'Etiket yok']] as const).map(([m, l]) => (
+                                <MenuItem key={m} onClick={() => p.onBarLabelChange(m)} active={p.barLabel === m}>{l}</MenuItem>
+                            ))}
+                        </Menu>
                         <Btn icon="percent" title="Çubuklarda tamamlanma yüzdesini göster" onClick={p.onToggleProgress} active={p.showProgress} />
                         <Menu id="theme" open={open} setOpen={setOpen} button={<Btn icon="palette" title="Çubuk renk teması" onClick={() => undefined} />}>
-                            {THEMES.map(t => <MenuItem key={t.name} onClick={() => p.onThemeChange(t.name)} active={t.name === p.themeName}>{t.name}</MenuItem>)}
+                            {THEMES.map(t => <MenuItem key={t.name} onClick={() => p.onThemeChange(t.name)} active={t.name === p.themeName}>{t.name === 'Classic Blue' ? 'MS Project (varsayılan)' : t.name}</MenuItem>)}
                         </Menu>
                     </>
                 )}
                 <div className="ml-auto flex items-center pl-2">
-                    <Btn icon="users" label="Kaynaklar" title="Kaynak sayfası" onClick={p.onOpenResources} />
-                    <Btn icon="calendar" label="Çalışma takvimi" title="Çalışma günleri, tatiller, günlük saat" onClick={p.onOpenCalendar} />
-                    <Btn icon="report" label="Maliyet" title="Maliyet raporu" onClick={p.onOpenReport} />
+                    <Btn icon="users" label="Kaynaklar" xwide title="Kaynak sayfası" onClick={p.onOpenResources} />
+                    <Btn icon="calendar" label="Çalışma takvimi" xwide title="Çalışma günleri, tatiller, günlük saat" onClick={p.onOpenCalendar} />
+                    <Btn icon="report" label="Maliyet" xwide title="Maliyet raporu" onClick={p.onOpenReport} />
                 </div>
             </div>
         </div>

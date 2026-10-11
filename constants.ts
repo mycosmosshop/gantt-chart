@@ -6,13 +6,13 @@ export const THEMES: GanttTheme[] = [
         name: 'Classic Blue',
         type: 'solid',
         colors: {
-            notStarted: '#3b82f6',
-            inProgress: '#2563eb',
-            completed: '#10b981',
-            criticalPath: '#ef4444',
-            summary: '#334155',
-            milestone: '#4f46e5',
-            milestoneCritical: '#dc2626',
+            notStarted: '#4a7fc9',
+            inProgress: '#4a7fc9',
+            completed: '#4a7fc9',
+            criticalPath: '#d64545',
+            summary: '#1f2937',
+            milestone: '#1f2937',
+            milestoneCritical: '#d64545',
         }
     },
     {

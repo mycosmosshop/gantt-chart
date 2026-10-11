@@ -84,6 +84,7 @@ export interface Task {
   remarks?: string;
   report?: boolean;
   wbsCode?: string; // Excel'den gelen özel WBS (ör. 1.2 = ML2); hiyerarşiyle tutarlıysa dışa aktarımda korunur
+  showOnTimeline?: boolean; // MS Project "Zaman çizelgesine ekle"; hiç işaretli görev yoksa varsayılan seçim kullanılır
 }
 
 // This interface is for tasks after processing, adding hierarchy and financial info

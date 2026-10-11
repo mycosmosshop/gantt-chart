@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ProcessedTask, CalendarSettings, ProjectResource, ResourceType, WorkResource, MaterialResource } from '../types';
 import { isWorkingDay, toDateString } from '../services/ganttService';
 import { ChevronRightIcon, ChevronLeftIcon } from './Icons';
+import { formatDate, formatMoney } from './ganttLayout';
 
 interface CalendarViewProps {
     tasks: ProcessedTask[];
@@ -14,10 +15,20 @@ interface CalendarViewProps {
 
 type DisplayMode = 'tasks' | 'resources';
 
-const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEK_DAYS = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
+const dow = (d: Date) => (d.getDay() + 6) % 7; // Pazartesi = 0
 
 const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, resources, allocationData, materialAllocationData, costAllocationData }) => {
-    const [currentDate, setCurrentDate] = useState(new Date());
+    // Açılışta: bugün proje aralığındaysa bugünün ayı, değilse projenin başladığı ay
+    const projectRange = useMemo(() => {
+        if (!tasks.length) return null;
+        return { start: new Date(Math.min(...tasks.map(t => t.start.getTime()))), end: new Date(Math.max(...tasks.map(t => t.end.getTime()))) };
+    }, [tasks]);
+    const [currentDate, setCurrentDate] = useState(() => {
+        const now = new Date();
+        if (!projectRange || (now >= projectRange.start && now <= projectRange.end)) return now;
+        return new Date(projectRange.start);
+    });
     const [displayMode, setDisplayMode] = useState<DisplayMode>('tasks');
 
     const changeMonth = (amount: number) => {
@@ -34,11 +45,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, re
         const firstDayOfMonth = new Date(year, month, 1);
         const lastDayOfMonth = new Date(year, month + 1, 0);
         const gridStartDate = new Date(firstDayOfMonth);
-        gridStartDate.setDate(gridStartDate.getDate() - firstDayOfMonth.getDay());
+        gridStartDate.setDate(gridStartDate.getDate() - dow(firstDayOfMonth));
         const gridEndDate = new Date(lastDayOfMonth);
-        if (lastDayOfMonth.getDay() !== 6) {
-            gridEndDate.setDate(gridEndDate.getDate() + (6 - lastDayOfMonth.getDay()));
-        }
+        gridEndDate.setDate(gridEndDate.getDate() + (6 - dow(lastDayOfMonth)));
 
         const weekArray: Date[][] = [];
         let dayIterator = new Date(gridStartDate);
@@ -115,7 +124,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, re
                     const segmentStart = new Date(Math.max(task.start.getTime(), weekStart.getTime()));
                     const segmentEnd = new Date(Math.min(task.end.getTime(), weekEnd.getTime()));
                     
-                    const startDayIndex = segmentStart.getDay();
+                    const startDayIndex = dow(segmentStart);
                     const span = Math.round((segmentEnd.getTime() - segmentStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
                     if (span > 0) {
@@ -174,32 +183,35 @@ const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, re
         return allocationsByDay;
     }, [displayMode, resources, allocationData, materialAllocationData, costAllocationData, calendarSettings]);
 
+    // MS Project takvim görünümü renkleri: açık mavi çubuk, tamamlanan kısım koyu şerit
     const getTaskColorClasses = (task: ProcessedTask) => {
-        if (task.status === 'Completed') return { bar: 'bg-gradient-to-r from-green-600 to-green-500 text-white', progress: 'bg-green-800' };
-        if (task.status === 'In Progress') return { bar: 'bg-gradient-to-r from-blue-600 to-blue-500 text-white', progress: 'bg-blue-800' };
-        return { bar: 'bg-gradient-to-r from-gray-400 to-gray-300 text-black', progress: 'bg-gray-500' };
+        if (task.status === 'Completed') return { bar: 'bg-emerald-100 border border-emerald-400 text-emerald-900', progress: 'bg-emerald-500/40' };
+        if (task.isOverdue) return { bar: 'bg-red-50 border border-red-300 text-red-900', progress: 'bg-red-400/40' };
+        return { bar: 'bg-[#dbe8f8] border border-[#4a7fc9] text-slate-900', progress: 'bg-[#4a7fc9]/35' };
     };
 
     return (
-        <div className="h-full w-full flex flex-col p-4 bg-white text-gray-800">
-            <header className="flex justify-between items-center mb-4 px-2 flex-shrink-0">
-                <div className="flex items-center">
-                    <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon /></button>
-                    <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon /></button>
-                    <h2 className="text-xl font-bold ml-4">
-                        {currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+        <div className="h-full w-full flex flex-col p-4 bg-white text-slate-800 overflow-auto">
+            <header className="flex justify-between items-center mb-3 px-1 flex-shrink-0">
+                <div className="flex items-center gap-1">
+                    <button onClick={() => changeMonth(-1)} className="p-1.5 rounded-md hover:bg-slate-100" title="Önceki ay"><ChevronLeftIcon /></button>
+                    <button onClick={() => changeMonth(1)} className="p-1.5 rounded-md hover:bg-slate-100" title="Sonraki ay"><ChevronRightIcon /></button>
+                    <h2 className="text-[17px] font-semibold text-slate-900 ml-2 w-44 capitalize">
+                        {currentDate.toLocaleString('tr-TR', { month: 'long', year: 'numeric' })}
                     </h2>
+                    <button onClick={() => setCurrentDate(new Date())} className="h-8 px-3 rounded-md border border-slate-300 text-[13px] hover:bg-slate-50">Bugün</button>
+                    {projectRange && <button onClick={() => setCurrentDate(new Date(projectRange.start))} className="h-8 px-3 rounded-md border border-slate-300 text-[13px] hover:bg-slate-50" title={`Proje: ${formatDate(projectRange.start)} – ${formatDate(projectRange.end)}`}>Proje başı</button>}
                 </div>
-                <div className="flex items-center bg-gray-200 rounded-md p-1">
-                    <button onClick={() => setDisplayMode('tasks')} className={`px-3 py-1 text-sm rounded-md transition-colors ${displayMode === 'tasks' ? 'bg-blue-600 text-white' : 'hover:bg-gray-300 text-gray-700'}`}>Tasks</button>
-                    <button onClick={() => setDisplayMode('resources')} className={`px-3 py-1 text-sm rounded-md transition-colors ${displayMode === 'resources' ? 'bg-blue-600 text-white' : 'hover:bg-gray-300 text-gray-700'}`}>Resource Usage</button>
+                <div className="inline-flex items-center rounded-md bg-slate-100 p-0.5">
+                    <button onClick={() => setDisplayMode('tasks')} className={`h-7 px-3 text-[12px] rounded transition-colors ${displayMode === 'tasks' ? 'bg-white text-slate-900 shadow-sm font-medium' : 'text-slate-600 hover:text-slate-900'}`}>Görevler</button>
+                    <button onClick={() => setDisplayMode('resources')} className={`h-7 px-3 text-[12px] rounded transition-colors ${displayMode === 'resources' ? 'bg-white text-slate-900 shadow-sm font-medium' : 'text-slate-600 hover:text-slate-900'}`}>Kaynak yükü</button>
                 </div>
             </header>
             
             <div className="flex-grow flex flex-col">
                 <div className="grid grid-cols-7 flex-shrink-0">
                     {WEEK_DAYS.map(day => (
-                        <div key={day} className="text-center font-bold p-2 bg-gray-100 text-sm border-b-2 border-gray-200 text-gray-600">{day}</div>
+                        <div key={day} className="text-center py-1.5 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide border-b border-slate-200 text-slate-500">{day}</div>
                     ))}
                 </div>
                 <div 
@@ -242,8 +254,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, re
                                                                 normal: 'bg-green-500/80 text-white',
                                                             };
                                                             classes = stateClasses[state];
-                                                            title = `${resource.name}: ${value.toFixed(1)}h / ${capacity.toFixed(1)}h capacity (${state})`;
-                                                            text = `${resource.name} (${value.toFixed(1)}h)`;
+                                                            title = `${resource.name}: ${value.toFixed(1)} sa / ${capacity.toFixed(1)} sa kapasite${state === 'over' ? ' (aşırı yüklü)' : ''}`;
+                                                            text = `${resource.name} (${value.toFixed(1)} sa)`;
                                                         } else if (type === ResourceType.Material) {
                                                             classes = 'bg-indigo-500/80 text-white';
                                                             const materialResource = resource as MaterialResource;
@@ -251,7 +263,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, re
                                                             text = `${resource.name} (${value.toFixed(1)} ${materialResource.materialLabel})`;
                                                         } else if (type === ResourceType.Cost) {
                                                             classes = 'bg-lime-500/80 text-black';
-                                                            const formattedCost = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+                                                            const formattedCost = formatMoney(value);
                                                             title = `${resource.name}: ${formattedCost}`;
                                                             text = `${resource.name} (${formattedCost})`;
                                                         }
@@ -292,15 +304,15 @@ const CalendarView: React.FC<CalendarViewProps> = ({ tasks, calendarSettings, re
                                                     className={`absolute top-0 left-0 h-full ${progressColorClass}`}
                                                     style={{ width: `${segment.task.progress}%` }}
                                                 ></div>
-                                                {segment.isStart && <span className="relative z-10 pl-2 font-semibold">{segment.task.name}</span>}
+                                                <span className={`relative z-10 pl-2 truncate ${segment.isStart ? 'font-semibold' : 'font-normal opacity-80'}`}>{segment.isStart ? '' : '… '}{segment.task.name}</span>
                                             </div>
                                              <div className="absolute bottom-full mb-2 w-max max-w-xs p-2 bg-white border border-gray-200 rounded-md shadow-lg text-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 text-gray-800">
                                                 <p className="font-bold">{segment.task.name}</p>
 
-                                                <p className="text-xs text-gray-500">
-                                                    {segment.task.start.toLocaleDateString()} - {segment.task.end.toLocaleDateString()}
+                                                <p className="text-xs text-slate-500">
+                                                    {formatDate(segment.task.start)} – {formatDate(segment.task.end)}
                                                 </p>
-                                                <p className="text-xs">Progress: {segment.task.progress}%</p>
+                                                <p className="text-xs">Tamamlanma: %{segment.task.progress}</p>
                                             </div>
                                         </div>
                                     );

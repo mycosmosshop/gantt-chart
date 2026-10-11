@@ -5,6 +5,8 @@ import { isWorkingDay, calculateDuration, addDays } from '../services/ganttServi
 import { SlackInfo } from '../services/cpm';
 import { ROW_H, HEADER_H, pixelsPerDay, timeTiers, startOfDay, endOfDayExclusive, formatDate, formatShortDate } from './ganttLayout';
 
+export type BarLabelMode = 'resources' | 'name' | 'both' | 'none';
+
 interface GanttChartProps {
     tasks: ProcessedTask[];          // görünen (daraltılmamış) satırlar, tabloyla aynı sırada
     allTasks: ProcessedTask[];
@@ -21,13 +23,16 @@ interface GanttChartProps {
     selectedIds: Set<number>;
     slack: Map<number, SlackInfo>;
     showSlack: boolean;
+    barLabel: BarLabelMode;
+    mode?: 'gantt' | 'tracking';     // tracking: MS Project İzleme Gantt'ı (güncel + temel plan)
+    resourceNames: Map<number, string>;
     onSelect: (taskId: number, additive: boolean) => void;
     onOpenTask: (taskId: number) => void;
 }
 
 const BAR_H = 16;
 const BAR_Y = (ROW_H - BAR_H) / 2;
-const LINK_COLOR = '#64748b';
+const LINK_COLOR = '#3f6fb5';
 const LINK_CRITICAL = '#dc2626';
 const SELECT_COLOR = '#1d4ed8';
 
@@ -36,7 +41,7 @@ const solid = (v: string | [string, string] | undefined, fallback = '#64748b'): 
 
 const GanttChart: React.FC<GanttChartProps> = ({
     tasks, allTasks, viewMode, timeDomain, minWidth, onUpdateTask, onAddDependency, criticalPath,
-    calendarSettings, theme, showProgress, selectedIds, slack, showSlack, onSelect, onOpenTask, minHeight = 0,
+    calendarSettings, theme, showProgress, selectedIds, slack, showSlack, barLabel, resourceNames, onSelect, onOpenTask, minHeight = 0, mode = 'gantt',
 }) => {
     const headerRef = useRef<SVGSVGElement>(null);
     const bodyRef = useRef<SVGSVGElement>(null);
@@ -219,6 +224,41 @@ const GanttChart: React.FC<GanttChartProps> = ({
             const sel = selectedIds.has(d.id);
             let labelX = w + 6;
 
+            if (mode === 'tracking') {
+                // Üst: güncel plan (tamamlanan kısım koyu), alt: temel plan (gri)
+                const TOP_Y = 5, TOP_H = 10, BASE_Y = 18, BASE_H = 7;
+                const bx = d.baselineStart ? timeScale(startOfDay(d.baselineStart)) - xStart(d) : 0;
+                const bw = d.baselineStart && d.baselineEnd ? Math.max(2, timeScale(endOfDayExclusive(d.baselineEnd)) - timeScale(startOfDay(d.baselineStart))) : 0;
+                const hasBase = !!(d.baselineStart && d.baselineEnd);
+                const late = d.finishVariance !== null && d.finishVariance > 0;
+                if (d.isSummary) {
+                    g.append('rect').attr('class', 'gc-hit').attr('x', 0).attr('y', 2).attr('width', w).attr('height', ROW_H - 4).attr('fill', 'transparent');
+                    g.append('rect').attr('x', 0).attr('y', TOP_Y + 2).attr('width', w).attr('height', 5).attr('fill', crit ? '#b91c1c' : '#1f2937');
+                    if (d.progress > 0) g.append('rect').attr('x', 0).attr('y', TOP_Y + 3).attr('width', w * d.progress / 100).attr('height', 3).attr('fill', '#22c55e');
+                    if (hasBase) g.append('rect').attr('x', bx).attr('y', BASE_Y + 1).attr('width', bw).attr('height', 4).attr('fill', '#9ca3af');
+                } else if (isPointMilestone(d)) {
+                    const cx = ppd / 2, s = 10;
+                    if (hasBase) g.append('path').attr('d', `M${bx + cx},${BASE_Y - 2} l${s / 2},${s / 2} l${-s / 2},${s / 2} l${-s / 2},${-s / 2} Z`).attr('fill', '#fff').attr('stroke', '#9ca3af').attr('stroke-width', 1.5);
+                    g.append('path').attr('class', 'gc-hit').attr('d', `M${cx},${TOP_Y - 3} l${s / 2},${s / 2} l${-s / 2},${s / 2} l${-s / 2},${-s / 2} Z`)
+                        .attr('fill', crit ? '#dc2626' : '#1f2937').attr('stroke', sel ? SELECT_COLOR : '#fff').attr('stroke-width', sel ? 2 : 1);
+                    labelX = cx + 10;
+                } else {
+                    const base = crit ? '#d64545' : '#4a7fc9';
+                    const light = d3.interpolateRgb(base, '#ffffff')(0.6);
+                    const dark = d3.color(base)?.darker(0.9)?.toString() || base;
+                    g.append('rect').attr('class', 'gc-hit').attr('x', 0).attr('y', TOP_Y).attr('width', w).attr('height', TOP_H).attr('fill', light)
+                        .attr('stroke', sel ? SELECT_COLOR : base).attr('stroke-width', sel ? 2 : 1);
+                    if (d.progress > 0) g.append('rect').attr('x', 0).attr('y', TOP_Y).attr('width', w * d.progress / 100).attr('height', TOP_H).attr('fill', dark).attr('pointer-events', 'none');
+                    if (hasBase) g.append('rect').attr('x', bx).attr('y', BASE_Y).attr('width', bw).attr('height', BASE_H).attr('fill', '#b8bec8').attr('stroke', '#9ca3af');
+                }
+                const right = Math.max(w, hasBase ? bx + bw : 0) + 6;
+                const varText = d.finishVariance ? `  ${d.finishVariance > 0 ? '+' : ''}${d.finishVariance} g` : '';
+                g.append('text').attr('x', d.isSummary || !isPointMilestone(d) ? right : labelX).attr('y', ROW_H / 2 + 4).attr('font-size', 11)
+                    .attr('fill', late ? '#b91c1c' : '#334155').attr('font-weight', d.isSummary ? 600 : 400).attr('pointer-events', 'none')
+                    .text(`%${d.progress}${hasBase ? varText : ''}`);
+                return;
+            }
+
             // Temel plan (baseline) — ince gri çubuk
             if (d.baselineStart && d.baselineEnd && !d.isSummary) {
                 const bx = timeScale(startOfDay(d.baselineStart)) - xStart(d);
@@ -256,8 +296,10 @@ const GanttChart: React.FC<GanttChartProps> = ({
                 g.append('path').attr('class', 'gc-hit').attr('d', `M${cx},${BAR_Y + 1} l${s / 2},${s / 2} l${-s / 2},${s / 2} l${-s / 2},${-s / 2} Z`)
                     .attr('fill', fillFor(key)).attr('stroke', sel ? SELECT_COLOR : (d.isOverdue ? '#dc2626' : '#fff')).attr('stroke-width', sel ? 2 : 1);
                 labelX = cx + s / 2 + 6;
-                g.append('text').attr('x', labelX).attr('y', ROW_H / 2 + 4).attr('font-size', 11).attr('fill', '#475569')
-                    .attr('class', 'gc-label').text(`${d.name}  ·  ${formatShortDate(d.start)}`);
+                // MS Project: kilometre taşının yanında tarihi
+                const msText = barLabel === 'name' || barLabel === 'both' ? `${d.name}  ${formatShortDate(d.start)}` : barLabel === 'none' ? '' : formatShortDate(d.start);
+                g.append('text').attr('x', labelX + 8).attr('y', ROW_H / 2 + 4).attr('font-size', 11).attr('fill', '#334155').attr('font-weight', 500)
+                    .attr('class', 'gc-label').attr('pointer-events', 'none').text(msText);
                 labelX = -1; // etiket yazıldı
             } else {
                 const key = crit ? 'criticalPath' : d.status === 'Completed' ? 'completed' : d.status === 'In Progress' ? 'inProgress' : 'notStarted';
@@ -267,8 +309,9 @@ const GanttChart: React.FC<GanttChartProps> = ({
                     .attr('fill', light)
                     .attr('stroke', sel ? SELECT_COLOR : base).attr('stroke-width', sel ? 2 : 1);
                 if (d.progress > 0) {
-                    g.append('rect').attr('class', 'gc-progress').attr('x', 0).attr('y', BAR_Y).attr('width', w * d.progress / 100).attr('height', BAR_H).attr('rx', 3)
-                        .attr('fill', theme.type === 'solid' ? base : (d3.color(base)?.darker(0.4)?.toString() || base)).attr('pointer-events', 'none');
+                    // MS Project tarzı: tamamlanma, çubuğun ortasında ince koyu şerit
+                    g.append('rect').attr('class', 'gc-progress').attr('x', 0).attr('y', BAR_Y + BAR_H / 2 - 2.5).attr('width', w * d.progress / 100).attr('height', 5)
+                        .attr('fill', d3.color(base)?.darker(1.3)?.toString() || '#1e3a5f').attr('pointer-events', 'none');
                 }
                 // Boyutlandırma tutamaçları
                 g.append('rect').attr('class', 'gc-resize-l').attr('x', -3).attr('y', BAR_Y).attr('width', 7).attr('height', BAR_H).attr('fill', 'transparent').style('cursor', 'ew-resize');
@@ -284,10 +327,17 @@ const GanttChart: React.FC<GanttChartProps> = ({
             }
 
             if (labelX > 0) {
-                const extra = showProgress && !d.isMilestone ? `  ${d.progress}%` : '';
-                g.append('text').attr('class', 'gc-label').attr('x', labelX).attr('y', ROW_H / 2 + 4)
-                    .attr('font-size', 11).attr('fill', d.isSummary ? '#0f172a' : '#475569').attr('font-weight', d.isSummary ? 600 : 400)
-                    .attr('pointer-events', 'none').text(d.name + extra);
+                // Çubuk etiketi: MS Project varsayılanı kaynak adları
+                const res = resourceNames.get(d.id) || '';
+                let text = '';
+                if (d.isSummary) text = barLabel === 'name' || barLabel === 'both' ? d.name : '';
+                else if (barLabel === 'resources') text = res;
+                else if (barLabel === 'name') text = d.name;
+                else if (barLabel === 'both') text = res ? `${d.name}  ·  ${res}` : d.name;
+                if (showProgress && !d.isMilestone) text = `${text}${text ? '  ' : ''}%${d.progress}`;
+                if (text) g.append('text').attr('class', 'gc-label').attr('x', labelX).attr('y', ROW_H / 2 + 4)
+                    .attr('font-size', 11).attr('fill', d.isSummary ? '#0f172a' : '#334155').attr('font-weight', d.isSummary ? 600 : 400)
+                    .attr('pointer-events', 'none').text(text);
             }
         });
 
@@ -339,7 +389,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
         let startX = 0;
         let moved = false;
         const moveDrag = d3.drag()
-            .filter((event: any) => !event.button && !(event.target as Element).classList.contains('gc-link')
+            .filter((event: any) => mode !== 'tracking' && !event.button && !(event.target as Element).classList.contains('gc-link')
                 && !(event.target as Element).classList.contains('gc-resize-l') && !(event.target as Element).classList.contains('gc-resize-r'))
             .clickDistance(4)
             .on('start', function (this: SVGGElement, event: any) { startX = event.x; moved = false; tip.style('display', 'none'); })
@@ -422,7 +472,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
             const t = tasks[i];
             if (t) onSelect(t.id, event.ctrlKey || event.metaKey || event.shiftKey);
         });
-    }, [tasks, allById, rowIndex, timeScale, chartWidth, bodyHeight, ppd, viewMode, criticalPath, calendarSettings, theme, showProgress, selectedIds, slack, showSlack, onSelect, onOpenTask, onUpdateTask, onAddDependency]);
+    }, [tasks, allById, rowIndex, timeScale, chartWidth, bodyHeight, ppd, viewMode, criticalPath, calendarSettings, theme, showProgress, selectedIds, slack, showSlack, barLabel, resourceNames, mode, onSelect, onOpenTask, onUpdateTask, onAddDependency]);
 
     return (
         <div ref={wrapRef} className="relative" style={{ width: chartWidth }}>
