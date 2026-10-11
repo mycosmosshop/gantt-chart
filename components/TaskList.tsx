@@ -320,6 +320,10 @@ const TaskList: React.FC<TaskListProps> = (props) => {
                                         </div>
                                     );
                                 }
+                                // Gösterge sütunu dar (28px): px-2 + truncate'in overflow:hidden'ı 14px simgenin sağını kesiyordu
+                                if (col.id === 'statusIndicator') {
+                                    return <div key={col.id} className="h-full flex items-center justify-center min-w-0 border-r border-slate-100 last:border-r-0">{renderCell(task, col.id)}</div>;
+                                }
                                 return (
                                     <div key={col.id} className={`${base} ${EDITABLE.has(col.id) ? 'cursor-text' : ''} ${task.isSummary ? 'font-medium text-slate-900' : ''}`}
                                         onDoubleClick={() => startEdit(task, col.id)}>
