@@ -240,8 +240,8 @@ const ProjectCharter: React.FC<ProjectCharterProps> = ({ charterData, onSave, ta
     await new Promise(resolve => setTimeout(resolve, 50));
 
     try {
-        const { jsPDF } = (window as any).jspdf;
-        const html2canvas = (window as any).html2canvas;
+        const { jsPDF } = await import('jspdf');
+        const html2canvas = (await import('html2canvas')).default;
 
         const canvas = await html2canvas(printContainer, {
             scale: 2, // Higher scale for better quality
@@ -388,7 +388,7 @@ const ProjectCharter: React.FC<ProjectCharterProps> = ({ charterData, onSave, ta
   const { totalBudget, totalCalculated, totalVariance } = useMemo(() => {
     const budget = formData.estimatedBudget.reduce((sum: number, entry) => sum + (Number(entry.cost) || 0), 0);
     const calculated = Array.from(convertedCalculatedCosts.values()).reduce((sum: number, cost) => sum + (Number(cost) || 0), 0);
-    return { totalBudget: budget, totalCalculated: calculated, totalVariance: budget - calculated };
+    return { totalBudget: budget, totalCalculated: calculated as number, totalVariance: budget - (calculated as number) };
   }, [formData.estimatedBudget, convertedCalculatedCosts]);
   
   const inputClass = "w-full p-2 bg-gray-50 rounded border border-gray-300 focus:ring-blue-500 focus:border-blue-500";

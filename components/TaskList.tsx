@@ -1,505 +1,344 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Task, ProcessedTask, CalendarSettings, ProjectResource, ResourceType, WorkResource } from '../types';
-import TaskModal from './TaskModal';
-import { EditIcon, DeleteIcon, AddIcon, IndentIcon, OutdentIcon, ChevronDownIcon, ChevronRightIcon, MilestoneIcon, WarningIcon, ColumnsIcon } from './Icons';
+import { ChevronDownIcon, ChevronRightIcon, WarningIcon, ColumnsIcon } from './Icons';
 import { calculateDuration, isWorkingDay, toDateString, addDays, toInputDateString } from '../services/ganttService';
 import { COLUMNS_CONFIG } from '../constants';
+import { ROW_H, HEADER_H, formatDate, formatMoney } from './ganttLayout';
+import { rowOrdinals, formatPredecessors, parsePredecessors, linkProblem } from '../services/taskOps';
 
 interface TaskListProps {
     tasks: ProcessedTask[];
     allTasks: ProcessedTask[];
     resources: ProjectResource[];
     onUpdateTask: (task: Task) => void;
-    onDeleteTask: (taskId: number) => void;
-    onAddTask: (task: Omit<Task, 'id' | 'parentId' | 'cost' | 'fixedCost'>, options: { parentId: number | null, insertAfterId?: number | null }) => void;
     onToggleCollapse: (taskId: number) => void;
-    onIndent: (taskId: number) => void;
-    onOutdent: (taskId: number) => void;
     onReorderTask: (draggedTaskId: number, targetTaskId: number) => void;
     calendarSettings: CalendarSettings;
     allocationData: { [resourceId: string]: { [dateStr: string]: number } };
     columnVisibility: { [key: string]: boolean };
     onColumnVisibilityChange: (visibility: { [key: string]: boolean }) => void;
-    onFooterHeightChange: (height: number) => void;
+    selectedIds: Set<number>;
+    onSelect: (taskId: number, mode: 'single' | 'toggle' | 'range') => void;
+    onOpenTask: (taskId: number) => void;
+    onContextMenu: (taskId: number, x: number, y: number) => void;
+    onQuickAdd: (name: string) => void;
+    criticalPath: Set<number>;
+    onNotify: (message: string) => void;
 }
 
-const EDITABLE_COLUMNS = ['taskName', 'start', 'end', 'duration', 'progress'];
-const ROW_HEIGHT = 48; // px
+const EDITABLE = new Set(['taskName', 'start', 'end', 'duration', 'progress', 'predecessors']);
 
 const TaskList: React.FC<TaskListProps> = (props) => {
-    const { tasks, allTasks, resources, onUpdateTask, onDeleteTask, onAddTask, onToggleCollapse, onIndent, onOutdent, onReorderTask, calendarSettings, allocationData, columnVisibility, onColumnVisibilityChange, onFooterHeightChange } = props;
-    
-    const [editingTask, setEditingTask] = useState<ProcessedTask | null>(null);
-    const [isCreating, setIsCreating] = useState(false);
-    const [creationParent, setCreationParent] = useState<number | null>(null);
-    const [insertAfterId, setInsertAfterId] = useState<number | null>(null);
+    const { tasks, allTasks, resources, onUpdateTask, onToggleCollapse, onReorderTask, calendarSettings, allocationData,
+        columnVisibility, onColumnVisibilityChange, selectedIds, onSelect, onOpenTask, onContextMenu, onQuickAdd, criticalPath, onNotify } = props;
+
     const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
     const [dropTargetId, setDropTargetId] = useState<number | null>(null);
-    const [isColumnsDropdownOpen, setIsColumnsDropdownOpen] = useState(false);
-    const dropdownRef = useRef<HTMLDivElement>(null);
-    const footerRef = useRef<HTMLDivElement>(null);
-    
-    // Inline editing state
+    const [isColumnsOpen, setIsColumnsOpen] = useState(false);
     const [editingCell, setEditingCell] = useState<{ taskId: number; columnId: string } | null>(null);
-    const [editValue, setEditValue] = useState<string>('');
+    const [editValue, setEditValue] = useState('');
+    const [quickName, setQuickName] = useState('');
+    const dropdownRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const resourceMap = useMemo(() => new Map(resources.filter(r => r.type === ResourceType.Work).map(r => [r.id, r as WorkResource])), [resources]);
+    const resourceMap = useMemo(() => new Map(resources.map(r => [r.id, r])), [resources]);
+    const ordinalById = useMemo(() => rowOrdinals(allTasks), [allTasks]);
+    const idByOrdinal = useMemo(() => new Map(Array.from(ordinalById.entries()).map(([id, n]) => [n, id])), [ordinalById]);
 
     useEffect(() => {
-        if (footerRef.current) {
-            onFooterHeightChange(footerRef.current.offsetHeight);
-        }
-    }, [onFooterHeightChange, tasks]); // Recalculate if tasks change, as it might wrap text differently (though unlikely with current styling)
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setIsColumnsDropdownOpen(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
+        const close = (e: MouseEvent) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setIsColumnsOpen(false); };
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
     }, []);
 
-     useEffect(() => {
-        if (editingCell && inputRef.current) {
-            inputRef.current.focus();
-            inputRef.current.select();
-        }
+    useEffect(() => {
+        if (editingCell && inputRef.current) { inputRef.current.focus(); inputRef.current.select(); }
     }, [editingCell]);
-    
-    const visibleColumns = useMemo(() => COLUMNS_CONFIG.filter(c => columnVisibility[c.id]), [columnVisibility]);
+
+    // Kayıtlı görünürlükte olmayan (yeni eklenmiş) sütunlar varsayılanına göre gösterilir
+    const visibleColumns = useMemo(() => COLUMNS_CONFIG.filter(c => c.fixed || (columnVisibility[c.id] ?? c.isVisible)), [columnVisibility]);
     const gridTemplateColumns = useMemo(() => visibleColumns.map(c => c.defaultWidth).join(' '), [visibleColumns]);
+    const minWidth = useMemo(() => visibleColumns.reduce((s, c) => s + (c.id === 'taskName' ? 220 : parseInt(c.defaultWidth, 10) || 80), 0), [visibleColumns]);
 
-    const minWidth = useMemo(() => {
-        const totalWidth = visibleColumns.reduce((sum, col) => {
-            if (col.id === 'taskName') return sum + 300; // Estimate for flexible column
-            const widthMatch = col.defaultWidth.match(/(\d+)/);
-            return sum + (widthMatch ? parseInt(widthMatch[0], 10) : 100);
-        }, 0);
-        return `${totalWidth}px`;
-    }, [visibleColumns]);
-
-    const getTaskAllocationState = useCallback((task: ProcessedTask): 'normal' | 'high' | 'over' => {
+    const allocationState = useCallback((task: ProcessedTask): 'normal' | 'high' | 'over' => {
         if (!allocationData || task.isSummary) return 'normal';
-
-        const workAssignments = task.resourceAssignments.filter(ra => resourceMap.has(ra.resourceId));
-        if (workAssignments.length === 0) return 'normal';
-        
-        let highestState: 'normal' | 'high' | 'over' = 'normal';
-        let currentDate = new Date(task.start);
-        const endDate = new Date(task.end);
-
-        while(currentDate <= endDate) {
-            if (highestState === 'over') break;
-            if (isWorkingDay(currentDate, calendarSettings)) {
-                const dateStr = toDateString(currentDate);
-                for (const assignment of workAssignments) {
-                    const resource = resourceMap.get(assignment.resourceId);
-                    if (resource) {
-                        const dailyCapacity = calendarSettings.hoursPerDay * (resource.maxUnits / 100);
-                        const dailyAllocation = allocationData[resource.id]?.[dateStr] || 0;
-                        if (dailyAllocation > dailyCapacity) {
-                            highestState = 'over';
-                            break; 
-                        }
-                        if (dailyAllocation > dailyCapacity * 0.8) {
-                            highestState = 'high';
-                        }
-                    }
-                }
+        const work = task.resourceAssignments.map(ra => resourceMap.get(ra.resourceId)).filter((r): r is WorkResource => !!r && r.type === ResourceType.Work);
+        if (work.length === 0) return 'normal';
+        let state: 'normal' | 'high' | 'over' = 'normal';
+        for (let d = new Date(task.start); d <= task.end; d.setDate(d.getDate() + 1)) {
+            if (!isWorkingDay(d, calendarSettings)) continue;
+            const ds = toDateString(d);
+            for (const r of work) {
+                const cap = calendarSettings.hoursPerDay * (r.maxUnits / 100);
+                const load = allocationData[r.id]?.[ds] || 0;
+                if (load > cap + 1e-6) return 'over';
+                if (load > cap * 0.8) state = 'high';
             }
-            currentDate.setDate(currentDate.getDate() + 1);
         }
-        return highestState;
+        return state;
     }, [allocationData, resourceMap, calendarSettings]);
-    
-    const handleEditSave = () => {
-        if (!editingCell) return;
 
-        const { taskId, columnId } = editingCell;
-        const task = allTasks.find(t => t.id === taskId);
-        if (!task) {
-            setEditingCell(null);
-            return;
+    const startEdit = (task: ProcessedTask, columnId: string) => {
+        if (!EDITABLE.has(columnId)) return;
+        if (task.isSummary && ['duration', 'progress', 'start', 'end', 'predecessors'].includes(columnId)) return;
+        let v = '';
+        switch (columnId) {
+            case 'taskName': v = task.name; break;
+            case 'start': v = toInputDateString(task.start); break;
+            case 'end': v = toInputDateString(task.end); break;
+            case 'duration': v = String(task.isMilestone ? 0 : calculateDuration(task.start, task.end, calendarSettings)); break;
+            case 'progress': v = String(task.progress); break;
+            case 'predecessors': v = formatPredecessors(task.dependencies, ordinalById); break;
         }
-
-        const taskToUpdate = { ...task };
-
-        try {
-            let valueChanged = true;
-            switch (columnId) {
-                case 'taskName':
-                    if (editValue.trim() === '' || editValue === task.name) {
-                        valueChanged = false;
-                        break;
-                    };
-                    taskToUpdate.name = editValue;
-                    break;
-                case 'start': {
-                    const originalValue = toInputDateString(task.start);
-                    if (editValue === originalValue) {
-                        valueChanged = false;
-                        break;
-                    }
-                    const newStart = new Date(editValue);
-                    newStart.setMinutes(newStart.getMinutes() + newStart.getTimezoneOffset());
-                    if (isNaN(newStart.getTime())) return;
-                    const duration = calculateDuration(task.start, task.end, calendarSettings);
-                    const newEnd = addDays(newStart, duration > 0 ? duration - 1 : 0, calendarSettings);
-                    taskToUpdate.start = newStart;
-                    taskToUpdate.end = newEnd;
-                    break;
-                }
-                case 'end': {
-                    const originalValue = toInputDateString(task.end);
-                     if (editValue === originalValue) {
-                        valueChanged = false;
-                        break;
-                    }
-                    const newEnd = new Date(editValue);
-                    newEnd.setMinutes(newEnd.getMinutes() + newEnd.getTimezoneOffset());
-                    if (isNaN(newEnd.getTime()) || newEnd < task.start) return;
-                    taskToUpdate.end = newEnd;
-                    break;
-                }
-                case 'duration': {
-                    const originalValue = `${calculateDuration(task.start, task.end, calendarSettings)}d`;
-                    if (editValue === originalValue) {
-                        valueChanged = false;
-                        break;
-                    }
-                    const newDuration = parseInt(editValue.replace(/\D/g, ''));
-                    if (isNaN(newDuration) || newDuration < 0 || (!task.isMilestone && newDuration < 1)) return;
-                    
-                    let newEnd;
-                    if (newDuration === 0) {
-                        newEnd = new Date(task.start);
-                    } else {
-                        newEnd = addDays(task.start, newDuration - 1, calendarSettings);
-                    }
-                    taskToUpdate.end = newEnd;
-                    break;
-                }
-                case 'progress': {
-                    const newProgress = parseInt(editValue, 10);
-                    if (isNaN(newProgress) || newProgress < 0 || newProgress > 100 || newProgress === task.progress) {
-                        valueChanged = false;
-                        break;
-                    }
-                    taskToUpdate.progress = newProgress;
-                    break;
-                }
-                default:
-                    valueChanged = false;
-                    break;
-            }
-            if (valueChanged) {
-                onUpdateTask(taskToUpdate);
-            }
-        } catch (error) {
-            console.error("Error saving inline edit:", error);
-        } finally {
-            setEditingCell(null);
-        }
-    };
-    
-    const handleDoubleClick = (task: ProcessedTask, columnId: string) => {
-        if ((task.isSummary && ['duration', 'progress'].includes(columnId)) || !EDITABLE_COLUMNS.includes(columnId)) {
-            return;
-        }
-
-        let initialValue = '';
-        switch(columnId) {
-            case 'taskName': initialValue = task.name; break;
-            case 'start': initialValue = toInputDateString(task.start); break;
-            case 'end': initialValue = toInputDateString(task.end); break;
-            case 'duration': initialValue = `${calculateDuration(task.start, task.end, calendarSettings)}d`; break;
-            case 'progress': initialValue = task.progress.toString(); break;
-        }
-        setEditValue(initialValue);
+        setEditValue(v);
         setEditingCell({ taskId: task.id, columnId });
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') {
-            handleEditSave();
-        } else if (e.key === 'Escape') {
-            setEditingCell(null);
-        }
-    };
-    
-    const getInputType = (columnId: string) => {
-        if (columnId === 'start' || columnId === 'end') return 'date';
-        if (columnId === 'progress') return 'number';
-        return 'text';
+    const parseInputDate = (s: string): Date | null => {
+        const [y, m, d] = s.split('-').map(Number);
+        if (!y || !m || !d) return null;
+        const dt = new Date(y, m - 1, d);
+        return isNaN(dt.getTime()) ? null : dt;
     };
 
-
-    const handleModalSave = (taskData: Task | Omit<Task, 'id' | 'cost'>, options?: { insertAfterId: number | null }) => {
-        if ('id' in taskData && taskData.id > 0) {
-            onUpdateTask(taskData as Task);
-        } else {
-            const { parentId, ...restOfTaskData } = taskData as Omit<Task, 'id' | 'cost'>;
-            onAddTask(
-                restOfTaskData as Omit<Task, 'id' | 'cost' | 'parentId'>,
-                { parentId: parentId, insertAfterId: options?.insertAfterId }
-            );
-        }
-        setEditingTask(null);
-        setIsCreating(false);
-        setCreationParent(null);
-        setInsertAfterId(null);
-    };
-
-    const handleOpenCreator = (options: { parentId: number | null, insertAfterId?: number }) => {
-        setCreationParent(options.parentId);
-        setInsertAfterId(options.insertAfterId ?? null);
-        setIsCreating(true);
-    }
-    
-    const handleDragStart = (e: React.DragEvent, taskId: number) => {
-        setDraggedItemId(taskId);
-        e.dataTransfer.effectAllowed = 'move';
-    };
-
-    const handleDragOver = (e: React.DragEvent) => e.preventDefault();
-    const handleDragEnter = (targetTaskId: number) => {
-        if (draggedItemId === null || draggedItemId === targetTaskId) return;
-        const draggedTask = tasks.find(t => t.id === draggedItemId);
-        const targetTask = tasks.find(t => t.id === targetTaskId);
-        if (draggedTask && targetTask && draggedTask.parentId === targetTask.parentId) {
-            setDropTargetId(targetTaskId);
-        }
-    };
-    const handleDrop = (e: React.DragEvent, targetTaskId: number) => {
-        e.preventDefault();
-        if (draggedItemId === null) return handleDragEnd();
-        const draggedTask = allTasks.find(t => t.id === draggedItemId);
-        const targetTask = allTasks.find(t => t.id === targetTaskId);
-        if (draggedTask && targetTask && draggedTask.id !== targetTask.id && draggedTask.parentId === targetTask.parentId) {
-            onReorderTask(draggedTask.id, targetTask.id);
-        }
-        handleDragEnd();
-    };
-    const handleDragEnd = () => {
-        setDraggedItemId(null);
-        setDropTargetId(null);
-    };
-
-    const formatCurrency = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
-
-    const totals = useMemo(() => {
-        const rootTasks = allTasks.filter(t => t.parentId === null);
-        if (rootTasks.length === 0) return { work: 0, cost: 0, actualCost: 0, sv: 0, progress: 0 };
-
-        const totalWork = rootTasks.reduce((sum, t) => sum + t.work, 0);
-        const totalProgressWork = rootTasks.reduce((sum, t) => sum + (t.work * (t.progress / 100)), 0);
-
-        return {
-            work: totalWork,
-            cost: rootTasks.reduce((sum, t) => sum + t.cost, 0),
-            actualCost: rootTasks.reduce((sum, t) => sum + t.actualCost, 0),
-            sv: rootTasks.reduce((sum, t) => sum + t.scheduleVariance, 0),
-            progress: totalWork > 0 ? (totalProgressWork / totalWork) * 100 : 0,
-        };
-    }, [allTasks]);
-
-    const renderCellContent = (task: ProcessedTask, columnId: string) => {
+    const commitEdit = () => {
+        if (!editingCell) return;
+        const { taskId, columnId } = editingCell;
+        setEditingCell(null);
+        const task = allTasks.find(t => t.id === taskId);
+        if (!task) return;
+        const next: Task = { ...task };
         switch (columnId) {
-            case 'start': 
-            case 'end': 
-                return task[columnId].toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: 'numeric' });
-            case 'baselineStart':
-            case 'baselineEnd':
-                const date = task[columnId as 'baselineStart' | 'baselineEnd'];
-                return date ? date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: 'numeric' }) : '–';
-            case 'startVariance':
-            case 'finishVariance':
-                const variance = task[columnId as 'startVariance' | 'finishVariance'];
-                if (variance === null || variance === undefined) return '–';
-                const sign = variance > 0 ? '+' : '';
-                const color = variance > 0 ? 'text-red-600' : variance < 0 ? 'text-green-600' : 'text-gray-600';
-                return <span className={color}>{`${sign}${variance}d`}</span>;
-            case 'duration': return `${calculateDuration(task.start, task.end, calendarSettings)}d`;
-            case 'progress': return `${task.progress}%`;
-            case 'work': return `${task.work.toFixed(1)}h`;
-            case 'cost':
-            case 'actualCost':
-            case 'plannedValue':
-            case 'earnedValue':
-            case 'scheduleVariance':
-            case 'costVariance':
-                return formatCurrency(task[columnId as keyof ProcessedTask] as number);
-            case 'schedulePerformanceIndex':
-            case 'costPerformanceIndex':
-                 return (task[columnId as keyof ProcessedTask] as number).toFixed(2);
-            case 'statusIndicator':
-                const statusConfig = {
-                    'Not Started': { color: 'bg-gray-400', title: 'Not Started' },
-                    'In Progress': { color: 'bg-blue-500', title: 'In Progress' },
-                    'Completed': { color: 'bg-green-500', title: 'Completed' },
-                };
-                const config = statusConfig[task.status] || statusConfig['Not Started'];
-                return <div className={`w-3 h-3 rounded-full mx-auto ${config.color}`} title={config.title} />;
+            case 'taskName':
+                if (!editValue.trim() || editValue === task.name) return;
+                next.name = editValue.trim();
+                break;
+            case 'start': {
+                const s = parseInputDate(editValue);
+                if (!s || s.getTime() === new Date(task.start).setHours(0, 0, 0, 0)) return;
+                const dur = calculateDuration(task.start, task.end, calendarSettings);
+                next.start = s;
+                next.end = task.isMilestone ? new Date(s) : addDays(s, Math.max(0, dur - 1), calendarSettings);
+                break;
+            }
+            case 'end': {
+                const e = parseInputDate(editValue);
+                if (!e) return;
+                if (e.getTime() < new Date(task.start).setHours(0, 0, 0, 0)) { onNotify('Bitiş, başlangıçtan önce olamaz.'); return; }
+                next.end = e;
+                break;
+            }
+            case 'duration': {
+                const n = parseInt(editValue.replace(/[^\d]/g, ''), 10);
+                if (isNaN(n) || n < 0) { onNotify('Süre bir tam sayı olmalı (iş günü).'); return; }
+                if (n === 0) { next.end = new Date(task.start); next.isMilestone = true; }
+                else { next.end = addDays(task.start, n - 1, calendarSettings); next.isMilestone = false; }
+                break;
+            }
+            case 'progress': {
+                const n = parseInt(editValue, 10);
+                if (isNaN(n) || n < 0 || n > 100) { onNotify('Tamamlanma 0 ile 100 arasında olmalı.'); return; }
+                if (n === task.progress) return;
+                next.progress = n;
+                break;
+            }
+            case 'predecessors': {
+                const { deps, errors } = parsePredecessors(editValue, idByOrdinal);
+                if (errors.length) { onNotify(errors.join(' · ')); return; }
+                const others = allTasks.map(t => (t.id === task.id ? { ...t, dependencies: [] } : t));
+                for (const d of deps) {
+                    const problem = linkProblem(others, d.predecessorId, task.id);
+                    if (problem) { onNotify(`${ordinalById.get(d.predecessorId)}: ${problem}`); return; }
+                }
+                next.dependencies = deps;
+                break;
+            }
+            default: return;
+        }
+        onUpdateTask(next);
+    };
+
+    const onEditKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') commitEdit();
+        else if (e.key === 'Escape') setEditingCell(null);
+    };
+
+    // Sürükle-bırak ile aynı üst görev altında sıralama
+    const handleDrop = (e: React.DragEvent, targetId: number) => {
+        e.preventDefault();
+        const dragged = allTasks.find(t => t.id === draggedItemId);
+        const target = allTasks.find(t => t.id === targetId);
+        if (dragged && target && dragged.id !== target.id && dragged.parentId === target.parentId) onReorderTask(dragged.id, target.id);
+        else if (dragged && target && dragged.id !== target.id) onNotify('Sürükleyerek yalnız aynı özet görevin altındaki görevler sıralanabilir. Taşımak için Girinti/Çıkıntı kullanın.');
+        setDraggedItemId(null); setDropTargetId(null);
+    };
+
+    const resourceNames = (task: ProcessedTask) => task.resourceAssignments.map(ra => {
+        const r = resourceMap.get(ra.resourceId);
+        if (!r) return null;
+        if (r.type === ResourceType.Work && ra.value !== 100) return `${r.name} [%${ra.value}]`;
+        return r.name;
+    }).filter(Boolean).join(', ');
+
+    const renderCell = (task: ProcessedTask, columnId: string): React.ReactNode => {
+        switch (columnId) {
+            case 'rowNumber': return <span className="text-slate-400 tabular-nums">{ordinalById.get(task.id)}</span>;
+            case 'start': case 'end': return formatDate(task[columnId]);
+            case 'baselineStart': case 'baselineEnd': return formatDate(task[columnId]);
+            case 'startVariance': case 'finishVariance': {
+                const v = task[columnId];
+                if (v === null || v === undefined) return '–';
+                return <span className={v > 0 ? 'text-red-600' : v < 0 ? 'text-emerald-600' : 'text-slate-500'}>{`${v > 0 ? '+' : ''}${v} g`}</span>;
+            }
+            case 'duration': return task.isMilestone && !task.isSummary ? <span className="text-slate-500">0 g</span> : `${calculateDuration(task.start, task.end, calendarSettings)} g`;
+            case 'predecessors': return <span className="text-slate-600">{formatPredecessors(task.dependencies, ordinalById)}</span>;
+            case 'resources': return <span className="text-slate-600" title={resourceNames(task)}>{resourceNames(task)}</span>;
+            case 'progress': {
+                const done = task.progress >= 100;
+                return (
+                    <div className="flex items-center gap-1.5 w-full">
+                        <div className="flex-1 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                            <div className={`h-full rounded-full ${done ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${task.progress}%` }} />
+                        </div>
+                        <span className="w-8 text-right tabular-nums text-slate-600">%{task.progress}</span>
+                    </div>
+                );
+            }
+            case 'work': return `${task.work.toFixed(1)} sa`;
+            case 'cost': case 'actualCost': case 'plannedValue': case 'earnedValue': case 'scheduleVariance': case 'costVariance': {
+                const v = task[columnId] as number;
+                const color = (columnId === 'scheduleVariance' || columnId === 'costVariance') ? (v >= 0 ? 'text-emerald-600' : 'text-red-600') : '';
+                return <span className={color}>{formatMoney(v)}</span>;
+            }
+            case 'schedulePerformanceIndex': case 'costPerformanceIndex': {
+                const v = task[columnId] as number;
+                return <span className={v < 0.95 ? 'text-red-600' : v > 1.05 ? 'text-emerald-600' : ''}>{v.toFixed(2)}</span>;
+            }
+            case 'statusIndicator': {
+                const alloc = allocationState(task);
+                if (task.isOverdue) return <span title="Gecikmede: planlanan bitiş geçti, görev tamamlanmadı"><WarningIcon className="w-3.5 h-3.5 text-red-500" /></span>;
+                if (alloc === 'over') return <span title="Kaynak aşırı yüklü (%100'ün üstünde)"><WarningIcon className="w-3.5 h-3.5 text-orange-500" /></span>;
+                if (alloc === 'high') return <span title="Kaynak yüklemesi yüksek (%80'in üstünde)"><WarningIcon className="w-3.5 h-3.5 text-amber-400" /></span>;
+                if (task.progress >= 100) return <span title="Tamamlandı" className="text-emerald-600 text-xs font-bold">✓</span>;
+                return null;
+            }
             default: return null;
         }
     };
 
+    const handleRowClick = (e: React.MouseEvent, id: number) => {
+        onSelect(id, e.shiftKey ? 'range' : (e.ctrlKey || e.metaKey) ? 'toggle' : 'single');
+    };
+
     return (
-        <div className="bg-white h-full text-sm text-gray-700 flex flex-col">
-            <div className="flex-shrink-0 sticky top-0 z-10">
-                <div className="grid gap-x-4 p-2 font-bold bg-gray-50 border-b border-gray-200 text-gray-600" style={{ gridTemplateColumns, minWidth }}>
-                    {visibleColumns.map((col, index) => (
-                        <div key={col.id} data-printable-hidden={col.id === 'actions' ? true : undefined} className={`flex items-center ${col.isRight ? 'justify-end' : ''} ${col.id === 'statusIndicator' ? 'justify-center' : ''}`} title={col.title}>
-                            {col.label}
-                            {index === 1 && (
-                                <div data-printable-hidden="true" className="relative ml-2" ref={dropdownRef}>
-                                    <button onClick={() => setIsColumnsDropdownOpen(prev => !prev)} className="p-1 rounded-md hover:bg-gray-200"><ColumnsIcon /></button>
-                                    {isColumnsDropdownOpen && (
-                                        <div className="absolute top-full mt-2 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-20">
-                                            {COLUMNS_CONFIG.filter(c => c.label).map(c => (
-                                                <label key={c.id} className="flex items-center px-3 py-2 text-sm font-normal text-gray-700 hover:bg-gray-100 cursor-pointer">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={columnVisibility[c.id]}
-                                                        onChange={e => onColumnVisibilityChange({ ...columnVisibility, [c.id]: e.target.checked })}
-                                                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                                    />
-                                                    <span className="ml-3">{c.label}</span>
+        <div className="bg-white text-[13px] text-slate-700" style={{ minWidth }}>
+            {/* Başlık */}
+            <div className="sticky top-0 z-10 bg-slate-50 border-b border-slate-300 grid items-end text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                style={{ gridTemplateColumns, height: HEADER_H }}>
+                {visibleColumns.map(col => (
+                    <div key={col.id} title={col.title} className={`px-2 pb-2 truncate border-r border-slate-200 last:border-r-0 h-full flex items-end ${col.isRight ? 'justify-end' : ''}`}>
+                        {col.id === 'taskName' ? (
+                            <div className="flex items-center justify-between w-full gap-2">
+                                <span>{col.label}</span>
+                                <div className="relative normal-case tracking-normal" ref={dropdownRef}>
+                                    <button onClick={() => setIsColumnsOpen(v => !v)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-medium" title="Sütunları seç">
+                                        <ColumnsIcon /><span className="text-[11px]">Sütunlar</span>
+                                    </button>
+                                    {isColumnsOpen && (
+                                        <div className="absolute left-0 top-full mt-1 w-60 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl z-30">
+                                            {COLUMNS_CONFIG.filter(c => c.label && !c.fixed).map(c => (
+                                                <label key={c.id} className="flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-normal text-slate-700 hover:bg-slate-50 cursor-pointer" title={c.title}>
+                                                    <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
+                                                        checked={columnVisibility[c.id] ?? c.isVisible}
+                                                        onChange={e => onColumnVisibilityChange({ ...columnVisibility, [c.id]: e.target.checked })} />
+                                                    <span>{c.label}</span>
+                                                    {c.title && <span className="ml-auto text-[11px] text-slate-400 truncate max-w-[90px]">{c.title.split('(')[0]}</span>}
                                                 </label>
                                             ))}
                                         </div>
                                     )}
                                 </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
+                            </div>
+                        ) : col.label}
+                    </div>
+                ))}
             </div>
-            <div className="divide-y divide-gray-200 flex-grow">
-                {tasks.map((task, index) => {
-                    const isDropTarget = dropTargetId === task.id && draggedItemId !== task.id;
-                    const isBeingDragged = draggedItemId === task.id;
-                    const allocationState = getTaskAllocationState(task);
-                    const isOver = allocationState === 'over';
-                    const isHigh = allocationState === 'high';
 
+            {/* Satırlar */}
+            <div>
+                {tasks.map((task) => {
+                    const selected = selectedIds.has(task.id);
+                    const isDrop = dropTargetId === task.id && draggedItemId !== task.id;
+                    const crit = criticalPath.has(task.id);
                     return (
-                        <div key={task.id} draggable onDragStart={(e) => handleDragStart(e, task.id)} onDragEnter={() => handleDragEnter(task.id)} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, task.id)} onDragEnd={handleDragEnd} onDragLeave={() => setDropTargetId(null)}
-                            className={`grid gap-x-4 items-center group transition-all duration-150 cursor-grab ${index % 2 === 0 ? 'bg-gray-50/50' : ''} ${isDropTarget ? 'border-t-2 border-blue-500' : 'border-t-2 border-transparent'} ${isBeingDragged ? 'opacity-50' : ''}`}
-                            style={{ gridTemplateColumns, minWidth, height: `${ROW_HEIGHT}px` }}>
+                        <div key={task.id}
+                            draggable={!editingCell}
+                            onDragStart={e => { setDraggedItemId(task.id); e.dataTransfer.effectAllowed = 'move'; }}
+                            onDragEnter={() => draggedItemId !== null && draggedItemId !== task.id && setDropTargetId(task.id)}
+                            onDragOver={e => e.preventDefault()}
+                            onDrop={e => handleDrop(e, task.id)}
+                            onDragEnd={() => { setDraggedItemId(null); setDropTargetId(null); }}
+                            onClick={e => handleRowClick(e, task.id)}
+                            onContextMenu={e => { e.preventDefault(); if (!selected) onSelect(task.id, 'single'); onContextMenu(task.id, e.clientX, e.clientY); }}
+                            className={`grid items-center border-b border-slate-100 ${selected ? 'bg-blue-50' : 'hover:bg-slate-50'} ${isDrop ? 'shadow-[inset_0_2px_0_#3b82f6]' : ''} ${draggedItemId === task.id ? 'opacity-40' : ''}`}
+                            style={{ gridTemplateColumns, height: ROW_H }}>
                             {visibleColumns.map(col => {
-                                const isEditing = editingCell?.taskId === task.id && editingCell?.columnId === col.id;
-                                const isEditable = EDITABLE_COLUMNS.includes(col.id) && !(task.isSummary && ['duration', 'progress'].includes(col.id));
-                                const cellClasses = `p-2 ${col.isRight ? 'text-right' : ''} ${col.id === 'statusIndicator' ? 'text-center' : ''} ${isEditable ? 'cursor-text hover:bg-gray-100' : ''}`;
-                                
+                                const editing = editingCell?.taskId === task.id && editingCell?.columnId === col.id;
+                                const base = `h-full flex items-center px-2 min-w-0 border-r border-slate-100 last:border-r-0 ${col.isRight ? 'justify-end tabular-nums' : ''}`;
+                                if (editing) {
+                                    const type = col.id === 'start' || col.id === 'end' ? 'date' : col.id === 'progress' || col.id === 'duration' ? 'number' : 'text';
+                                    return (
+                                        <div key={col.id} className={`${base} px-0.5`} style={col.id === 'taskName' ? { paddingLeft: 8 + task.level * 16 } : undefined}>
+                                            <input ref={inputRef} type={type} value={editValue} min={type === 'number' ? 0 : undefined} max={col.id === 'progress' ? 100 : undefined}
+                                                onChange={e => setEditValue(e.target.value)} onBlur={commitEdit} onKeyDown={onEditKey} onClick={e => e.stopPropagation()}
+                                                className={`w-full h-[24px] rounded border border-blue-500 bg-white px-1.5 text-[13px] outline-none ring-2 ring-blue-100 ${col.isRight ? 'text-right' : ''}`} />
+                                        </div>
+                                    );
+                                }
                                 if (col.id === 'taskName') {
+                                    const expanded = task.children.length > 0 && tasks.some(t => t.id === task.children[0].id);
                                     return (
-                                        <div key={col.id} style={{ paddingLeft: `${task.level * 20}px` }} className={`flex items-center min-w-0 p-2 h-full ${isEditable ? 'cursor-text hover:bg-gray-100' : ''}`} onDoubleClick={() => handleDoubleClick(task, col.id)}>
-                                            {isEditing ? (
-                                                <input
-                                                    ref={inputRef}
-                                                    type="text"
-                                                    value={editValue}
-                                                    onChange={(e) => setEditValue(e.target.value)}
-                                                    onBlur={handleEditSave}
-                                                    onKeyDown={handleKeyDown}
-                                                    className="w-full h-full bg-white border-2 border-blue-500 rounded p-0 m-0 focus:outline-none"
-                                                />
-                                            ) : (
-                                                <>
-                                                    {task.isSummary ? (
-                                                        <button onClick={() => onToggleCollapse(task.id)} className="mr-1 p-0.5 rounded hover:bg-gray-200 flex-shrink-0">
-                                                            {task.children.length > 0 && (tasks.find(t => t.id === task.children[0].id) ? <ChevronDownIcon /> : <ChevronRightIcon />)}
-                                                        </button>
-                                                    ) : <span className="w-5 mr-1 flex-shrink-0"></span>}
-                                                    <div className="flex-grow min-w-0 flex items-center gap-2">
-                                                        {task.isOverdue && <span title="This task is overdue!"><WarningIcon className="w-4 h-4 text-red-500 flex-shrink-0" /></span>}
-                                                        {(isOver || isHigh) && !task.isOverdue && <span title={isOver ? "A resource for this task is overallocated (>100%)." : "A resource for this task has high allocation (>80%)."}><WarningIcon className={isOver ? 'w-4 h-4 text-red-500' : 'w-4 h-4 text-amber-500'} /></span>}
-                                                        {task.isMilestone && <MilestoneIcon />}
-                                                        <div className="flex-grow min-w-0">
-                                                            <div className="truncate" title={task.name}><span className="text-gray-500 mr-2">{task.wbs}</span><span className="font-medium text-gray-900">{task.name}</span></div>
-                                                            {!task.isSummary && !task.isMilestone && <div className="w-full bg-gray-300 rounded-full h-1.5 mt-1"><div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${task.progress}%` }}></div></div>}
-                                                        </div>
-                                                    </div>
-                                                </>
-                                            )}
+                                        <div key={col.id} className={`${base} gap-1`} style={{ paddingLeft: 4 + task.level * 16 }} onDoubleClick={() => startEdit(task, col.id)}>
+                                            {task.isSummary ? (
+                                                <button onClick={e => { e.stopPropagation(); onToggleCollapse(task.id); }} className="flex-shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-200" title={expanded ? 'Daralt' : 'Genişlet'}>
+                                                    {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                                                </button>
+                                            ) : <span className="w-5 flex-shrink-0" />}
+                                            {task.isMilestone && !task.isSummary && <span className="flex-shrink-0 w-2.5 h-2.5 rotate-45 bg-indigo-500 mr-1" title="Kilometre taşı" />}
+                                            <span className="text-slate-400 text-[11px] tabular-nums flex-shrink-0 mr-1">{task.wbs}</span>
+                                            <span className={`truncate ${task.isSummary ? 'font-semibold text-slate-900' : 'text-slate-800'} ${crit ? 'text-red-700' : ''}`} title={task.name}>{task.name}</span>
                                         </div>
                                     );
                                 }
-                                if (col.id === 'actions') {
-                                    return (
-                                        <div key={col.id} data-printable-hidden="true" className="flex items-center justify-end space-x-1 opacity-0 group-hover:opacity-100 transition-opacity p-2">
-                                            <button onClick={() => handleOpenCreator({ parentId: task.parentId, insertAfterId: task.id })} className="p-1 rounded hover:bg-gray-200" title="Add Task Below"><AddIcon /></button>
-                                            <button onClick={() => onOutdent(task.id)} disabled={task.parentId === null} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed" title="Outdent Task"><OutdentIcon /></button>
-                                            <button onClick={() => onIndent(task.id)} disabled={index === 0} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed" title="Indent Task"><IndentIcon /></button>
-                                            <button onClick={() => setEditingTask(task)} className="p-1 rounded hover:bg-gray-200" title="Edit Task"><EditIcon /></button>
-                                            <button onClick={() => onDeleteTask(task.id)} className="p-1 rounded hover:bg-red-100 text-red-500 hover:text-red-700" title="Delete Task"><DeleteIcon /></button>
-                                        </div>
-                                    );
-                                }
-                                const svColor = task.scheduleVariance >= 0 ? 'text-green-600' : 'text-red-600';
-                                const cvColor = task.costVariance >= 0 ? 'text-green-600' : 'text-red-600';
-                                const dynamicClassName = `${col.id === 'scheduleVariance' ? svColor : ''} ${col.id === 'costVariance' ? cvColor : ''}`;
-
                                 return (
-                                    <div key={col.id} className={`${cellClasses} ${dynamicClassName}`} onDoubleClick={() => handleDoubleClick(task, col.id)} title={col.isRight ? (renderCellContent(task, col.id)?.toString()) : ''}>
-                                         {isEditing ? (
-                                            <input
-                                                ref={inputRef}
-                                                type={getInputType(col.id)}
-                                                value={editValue}
-                                                onChange={(e) => setEditValue(e.target.value)}
-                                                onBlur={handleEditSave}
-                                                onKeyDown={handleKeyDown}
-                                                className={`w-full h-full bg-white border-2 border-blue-500 rounded p-0 m-0 focus:outline-none ${col.isRight ? 'text-right' : ''}`}
-                                                min={col.id === 'progress' ? 0 : undefined}
-                                                max={col.id === 'progress' ? 100 : undefined}
-                                            />
-                                        ) : (
-                                            renderCellContent(task, col.id)
-                                        )}
+                                    <div key={col.id} className={`${base} ${EDITABLE.has(col.id) ? 'cursor-text' : ''} ${task.isSummary ? 'font-medium text-slate-900' : ''}`}
+                                        onDoubleClick={() => startEdit(task, col.id)}>
+                                        <span className="truncate w-full block" style={{ textAlign: col.isRight ? 'right' : undefined }}>{renderCell(task, col.id)}</span>
                                     </div>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </div>
-            <div ref={footerRef} className="flex-shrink-0">
-                <div className="grid gap-x-4 p-2 font-bold bg-gray-100 z-10 border-t-2 border-gray-300 text-gray-800" style={{ gridTemplateColumns, minWidth }}>
-                    {visibleColumns.map(col => {
-                        if (col.id === 'taskName') return <div key={col.id} className="p-2">Proje Toplamları</div>;
-                        if (col.id === 'progress') return <div key={col.id} className="p-2 text-right">{totals.progress.toFixed(0)}%</div>;
-                        if (col.id === 'work') return <div key={col.id} className="p-2 text-right">{totals.work.toFixed(1)}h</div>;
-                        if (col.id === 'cost') return <div key={col.id} className="p-2 text-right">{formatCurrency(totals.cost)}</div>;
-                        if (col.id === 'actualCost') return <div key={col.id} className="p-2 text-right">{formatCurrency(totals.actualCost)}</div>;
-                        if (col.id === 'scheduleVariance') return <div key={col.id} className={`p-2 text-right ${totals.sv >= 0 ? 'text-green-700' : 'text-red-700'}`}>{formatCurrency(totals.sv)}</div>;
-                        return <div key={col.id} className="p-2"></div>
-                    })}
+
+                {/* Hızlı ekleme satırı */}
+                <div className="grid items-center border-b border-slate-100 bg-white" style={{ gridTemplateColumns, height: ROW_H }}>
+                    {visibleColumns.map(col => col.id === 'taskName' ? (
+                        <div key={col.id} className="px-1.5 h-full flex items-center">
+                            <input value={quickName} onChange={e => setQuickName(e.target.value)}
+                                onKeyDown={e => {
+                                    e.stopPropagation();
+                                    if (e.key === 'Enter' && quickName.trim()) { onQuickAdd(quickName.trim()); setQuickName(''); }
+                                    if (e.key === 'Escape') { setQuickName(''); (e.target as HTMLInputElement).blur(); }
+                                }}
+                                placeholder="+ Yeni görev yazın, Enter'a basın"
+                                className="w-full h-[24px] rounded px-2 text-[13px] text-slate-800 placeholder:text-slate-400 bg-transparent hover:bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                        </div>
+                    ) : <div key={col.id} />)}
                 </div>
-                <div className="p-2" data-printable-hidden="true">
-                    <button onClick={() => handleOpenCreator({ parentId: null })} className="w-full flex items-center justify-center space-x-2 p-2 rounded-md bg-blue-600 hover:bg-blue-700 transition-colors text-white font-semibold">
-                        <AddIcon />
-                        <span>Add New Task</span>
-                    </button>
-                </div>
+                <div style={{ height: ROW_H * 2 }} />
             </div>
-            {(editingTask || isCreating) && (
-                <TaskModal 
-                    task={editingTask} 
-                    tasks={allTasks} 
-                    resources={resources} 
-                    onSave={handleModalSave} 
-                    onClose={() => { setEditingTask(null); setIsCreating(false); }} 
-                    isSummary={editingTask?.isSummary ?? false} 
-                    calendarSettings={calendarSettings}
-                    creationParentId={creationParent}
-                    creationInsertAfterId={insertAfterId}
-                />
-            )}
         </div>
     );
 };

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { ProcessedTask, ViewMode, CalendarSettings } from '../types';
 import { MilestoneIcon } from './Icons';
 
-declare const d3: any;
+import * as d3 from 'd3';
 
 interface TrackingGanttViewProps {
     tasks: ProcessedTask[];

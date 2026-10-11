@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 // FIX: Corrected typo in uuid import alias to resolve multiple 'uuidv4' is not defined errors.
 import { v4 as uuidv4 } from 'uuid';
-import Toolbar from './components/Toolbar';
+import Ribbon, { Icon } from './components/Ribbon';
+import TaskModal from './components/TaskModal';
 import TaskList from './components/TaskList';
 import GanttChart from './components/GanttChart';
 import CalendarModal from './components/CalendarModal';
@@ -25,7 +26,9 @@ import { exportToJson, importFromJson } from './services/jsonService';
 import { cloudFetchAll, cloudSaveProject, cloudSaveTemplates, cloudDeleteProject, subscribe as cloudSubscribe, flushPending as cloudFlushPending } from './services/cloudSync';
 
 
-declare const d3: any;
+import * as d3 from 'd3';
+import { rowOrdinals, linkProblem } from './services/taskOps';
+import { pixelsPerDay, startOfDay, formatDate, formatMoney } from './components/ganttLayout';
 
 export const PROJECT_BASE_CURRENCY = 'TRY';
 const HISTORY_LIMIT = 30; // Max number of undo steps
@@ -148,6 +151,116 @@ const pruneOrphanTasks = <T extends { id: number; parentId: number | null }>(tas
     return tasks.filter(reachable);
 };
 
+const EMPTY_SET: Set<number> = new Set();
+
+type ProjectSummary = { start: Date; end: Date; duration: number; progress: number; taskCount: number; overdue: number; critical: number | null; cost: number } | null;
+
+const StatusBar: React.FC<{ summary: ProjectSummary; autoSchedule: boolean; selection: number }> = ({ summary, autoSchedule, selection }) => (
+    <div className="flex-shrink-0 h-8 flex items-center gap-5 px-4 border-t border-slate-200 bg-white text-[12px] text-slate-500 overflow-x-auto whitespace-nowrap">
+        {summary ? (
+            <>
+                <span><span className="text-slate-400">Proje:</span> <span className="text-slate-700">{formatDate(summary.start)} – {formatDate(summary.end)}</span> <span className="text-slate-400">({summary.duration} iş günü)</span></span>
+                <span className="flex items-center gap-2">
+                    <span className="text-slate-400">Tamamlanma</span>
+                    <span className="inline-block w-24 h-1.5 rounded-full bg-slate-200 overflow-hidden"><span className="block h-full bg-emerald-500" style={{ width: `${summary.progress}%` }} /></span>
+                    <span className="text-slate-700 tabular-nums">%{summary.progress.toFixed(0)}</span>
+                </span>
+                <span><span className="text-slate-700">{summary.taskCount}</span> görev</span>
+                {summary.overdue > 0 && <span className="text-red-600">{summary.overdue} gecikmede</span>}
+                {summary.critical !== null && <span className="text-red-600">{summary.critical} kritik</span>}
+                <span><span className="text-slate-400">Maliyet:</span> <span className="text-slate-700">{formatMoney(summary.cost)}</span></span>
+            </>
+        ) : <span>Henüz görev yok. Aşağıdaki boş satıra bir görev adı yazıp Enter'a basın.</span>}
+        <span className="ml-auto flex items-center gap-4">
+            {selection > 0 && <span>{selection} seçili</span>}
+            <span className={autoSchedule ? 'text-blue-600' : 'text-amber-600'}>{autoSchedule ? 'Otomatik zamanlama' : 'Elle zamanlama'}</span>
+        </span>
+    </div>
+);
+
+const TaskContextMenu: React.FC<{
+    x: number; y: number; task: ProcessedTask | null; selectionCount: number; onClose: () => void;
+    actions: { info: () => void; addBelow: () => void; addChild: () => void; indent: () => void; outdent: () => void; link: () => void; unlink: () => void; setProgress: (p: number) => void; remove: () => void };
+}> = ({ x, y, task, selectionCount, onClose, actions }) => {
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+        const t = setTimeout(() => document.addEventListener('mousedown', close));
+        return () => { clearTimeout(t); document.removeEventListener('mousedown', close); };
+    }, [onClose]);
+    if (!task) return null;
+    const left = Math.min(x, window.innerWidth - 250);
+    const top = Math.min(y, window.innerHeight - 380);
+    const Item: React.FC<{ onClick: () => void; icon: string; hint?: string; danger?: boolean; disabled?: boolean; children: React.ReactNode }> = ({ onClick, icon, hint, danger, disabled, children }) => (
+        <button disabled={disabled} onClick={onClick} className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] disabled:opacity-40 ${danger ? 'text-red-600 hover:bg-red-50' : 'text-slate-700 hover:bg-slate-50'}`}>
+            <Icon name={icon} className="w-4 h-4 text-slate-400" /><span className="flex-1">{children}</span>{hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+        </button>
+    );
+    return (
+        <div ref={ref} style={{ left, top }} className="fixed z-[55] w-60 rounded-lg border border-slate-200 bg-white py-1 shadow-xl">
+            <div className="px-3 py-1.5 text-[12px] font-medium text-slate-900 truncate border-b border-slate-100 mb-1">{selectionCount > 1 ? `${selectionCount} görev seçili` : task.name}</div>
+            <Item onClick={actions.info} icon="info" hint="Shift+F2" disabled={selectionCount > 1}>Görev bilgileri</Item>
+            <Item onClick={actions.addBelow} icon="plus" hint="Insert">Altına görev ekle</Item>
+            <Item onClick={actions.addChild} icon="subtask" disabled={selectionCount > 1}>Alt görev ekle</Item>
+            <div className="my-1 border-t border-slate-100" />
+            <Item onClick={actions.indent} icon="indent" hint="Alt+Shift+→">Girinti</Item>
+            <Item onClick={actions.outdent} icon="outdent" hint="Alt+Shift+←" disabled={task.parentId === null}>Çıkıntı</Item>
+            <Item onClick={actions.link} icon="link" hint="Ctrl+F2" disabled={selectionCount < 2}>Seçilenleri bağla</Item>
+            <Item onClick={actions.unlink} icon="unlink">Bağları kaldır</Item>
+            {!task.isSummary && (
+                <>
+                    <div className="my-1 border-t border-slate-100" />
+                    <div className="flex items-center gap-1 px-3 py-1.5 text-[12px] text-slate-500">
+                        <span className="mr-1">Tamamlanma</span>
+                        {[0, 25, 50, 75, 100].map(v => (
+                            <button key={v} onClick={() => actions.setProgress(v)} className={`flex-1 rounded py-0.5 hover:bg-blue-50 hover:text-blue-700 ${task.progress === v ? 'bg-blue-100 text-blue-800' : 'bg-slate-50'}`}>{v}</button>
+                        ))}
+                    </div>
+                </>
+            )}
+            <div className="my-1 border-t border-slate-100" />
+            <Item onClick={actions.remove} icon="trash" hint="Delete" danger>Sil</Item>
+        </div>
+    );
+};
+
+const SHORTCUTS: [string, string][] = [
+    ['Insert  ·  Alt+Enter', 'Seçili görevin altına yeni görev'],
+    ['Delete', 'Seçili görevleri sil'],
+    ['Alt+Shift+→ / ←', 'Girinti / çıkıntı'],
+    ['Ctrl+F2', 'Seçili görevleri sırayla bağla'],
+    ['Ctrl+Shift+F2', 'Bağları kaldır'],
+    ['Shift+F2  ·  çift tık', 'Görev bilgileri'],
+    ['↑ / ↓  (Shift ile çoklu)', 'Satırlar arasında gezin'],
+    ['→ / ←', 'Özet görevi aç / kapat'],
+    ['Ctrl+tık  ·  Shift+tık', 'Çoklu / aralık seçimi'],
+    ['Ctrl+A', 'Tümünü seç'],
+    ['Ctrl+Z  ·  Ctrl+Y', 'Geri al / yinele'],
+    ['Çift tık hücre', 'Hücreyi düzenle'],
+    ['Çubuğu sürükle', 'Taşı (gün adımı); uçlarından: süre değiştir'],
+    ['Çubuk ucundaki ○ noktayı sürükle', 'Başka göreve bırak → bağ oluşur'],
+    ['Sağ tık + sürükle  ·  Ctrl+tekerlek', 'Şemayı kaydır / ölçeği değiştir'],
+];
+
+const ShortcutsDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+    <div className="fixed inset-0 z-[58] flex items-center justify-center bg-slate-900/40" onClick={onClose}>
+        <div className="w-[520px] max-w-[92vw] rounded-xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
+                <h2 className="text-[15px] font-semibold text-slate-900">Kısayollar ve ipuçları</h2>
+                <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">✕</button>
+            </div>
+            <div className="px-5 py-3 max-h-[70vh] overflow-auto">
+                {SHORTCUTS.map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between gap-4 py-1.5 border-b border-slate-50 last:border-0 text-[13px]">
+                        <span className="text-slate-600">{v}</span>
+                        <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-mono text-slate-700 whitespace-nowrap">{k}</kbd>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </div>
+);
+
 const App: React.FC = () => {
     // Multi-project state - SINGLE SOURCE OF TRUTH
     const [allProjects, setAllProjects] = useState<{ [id: string]: Project }>({});
@@ -162,10 +275,21 @@ const App: React.FC = () => {
     const [isLoaded, setIsLoaded] = useState(false);
     const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
     const [isResourceSheetOpen, setIsResourceSheetOpen] = useState(false);
-    const [sidebarWidth, setSidebarWidth] = useState(450);
+    const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+        try { const v = parseInt(localStorage.getItem('ganttSidebarWidth') || '', 10); if (v >= 300) return v; } catch { /* yok */ }
+        return Math.min(760, Math.max(520, Math.round(window.innerWidth * 0.42)));
+    });
+    useEffect(() => { try { localStorage.setItem('ganttSidebarWidth', String(sidebarWidth)); } catch { /* yok */ } }, [sidebarWidth]);
     const [isReportModalOpen, setIsReportModalOpen] = useState(false);
     const [showProgressOnBars, setShowProgressOnBars] = useState(false);
-    const [sidebarFooterHeight, setSidebarFooterHeight] = useState(0);
+    // Seçim, görev penceresi, sağ tık menüsü ve bildirimler
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const selectionAnchorRef = useRef<number | null>(null);
+    const [taskDialog, setTaskDialog] = useState<null | { mode: 'edit'; taskId: number } | { mode: 'create'; parentId: number | null; insertAfterId: number | null }>(null);
+    const [contextMenu, setContextMenu] = useState<null | { x: number; y: number; taskId: number }>(null);
+    const [toast, setToast] = useState<string | null>(null);
+    const [showShortcuts, setShowShortcuts] = useState(false);
+    const [ganttViewport, setGanttViewport] = useState({ width: 800, height: 600 });
 
     // Undo/Redo state
     const [undoHistory, setUndoHistory] = useState<{ [projectId: string]: HistoryState[] }>({});
@@ -523,7 +647,7 @@ const App: React.FC = () => {
         window.addEventListener('mouseup', handleMouseUp);
     }, [currentWidth, setWidth, minWidth, maxWidth, isRightSided]);
 
-    const handleMouseDownOnGanttSplitter = createSplitterMouseDownHandler(sidebarWidth, setSidebarWidth, 300, 800);
+    const handleMouseDownOnGanttSplitter = createSplitterMouseDownHandler(sidebarWidth, setSidebarWidth, 300, Math.max(800, window.innerWidth - 300));
 
     const tasksWithCharterFixedCosts = useMemo(() => {
         const fixedCostsByTaskId = new Map<number, number>();
@@ -1519,8 +1643,8 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         const pdfSvg = d3.select(pdfSvgNode);
         const pdfTimeScale = d3.scaleTime().domain(timeDomain).range([0, PDF_GANTT_WIDTH]);
     
-        const taskIndexMap = new Map(visibleTasks.map((task, index) => [task.id, index]));
-        const allTasksMap = new Map(processedTasks.map(t => [t.id, t]));
+        const taskIndexMap = new Map<number, number>(visibleTasks.map((task, index) => [task.id, index] as [number, number]));
+        const allTasksMap = new Map<number, ProcessedTask>(processedTasks.map(t => [t.id, t] as [number, ProcessedTask]));
     
         const defs = pdfSvg.append('defs');
         defs.append('marker')
@@ -1680,8 +1804,8 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         await new Promise(resolve => setTimeout(resolve, 200));
     
         try {
-            const { jsPDF } = (window as any).jspdf;
-            const html2canvas = (window as any).html2canvas;
+            const { jsPDF } = await import('jspdf');
+            const html2canvas = (await import('html2canvas')).default;
     
             const canvas = await html2canvas(printContainer, { scale: 2, useCORS: true });
             const imgData = canvas.toDataURL('image/png');
@@ -1720,6 +1844,385 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
         }
     }, [activeProject, visibleTasks, timeDomain, calendarSettings, currentTheme, criticalPath, processedTasks]);
 
+
+    // ───────────────────────── Seçim ve görev komutları ─────────────────────────
+    const notify = useCallback((message: string) => setToast(message), []);
+    useEffect(() => {
+        if (!toast) return;
+        const t = setTimeout(() => setToast(null), 3800);
+        return () => clearTimeout(t);
+    }, [toast]);
+
+    // Proje değişince ya da görev silinince geçersiz seçimleri temizle
+    useEffect(() => {
+        setSelectedIds(prev => {
+            const ids = new Set(tasks.map(t => t.id));
+            const next = new Set(Array.from(prev).filter(id => ids.has(id)));
+            return next.size === prev.size ? prev : next;
+        });
+    }, [tasks]);
+    useEffect(() => { setSelectedIds(new Set()); setContextMenu(null); }, [activeProjectId]);
+
+    const handleSelect = useCallback((taskId: number, mode: 'single' | 'toggle' | 'range') => {
+        setSelectedIds(prev => {
+            if (mode === 'toggle') {
+                const next = new Set(prev);
+                if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
+                selectionAnchorRef.current = taskId;
+                return next;
+            }
+            if (mode === 'range' && selectionAnchorRef.current !== null) {
+                const a = visibleTasks.findIndex(t => t.id === selectionAnchorRef.current);
+                const b = visibleTasks.findIndex(t => t.id === taskId);
+                if (a !== -1 && b !== -1) {
+                    const [lo, hi] = a < b ? [a, b] : [b, a];
+                    return new Set(visibleTasks.slice(lo, hi + 1).map(t => t.id));
+                }
+            }
+            selectionAnchorRef.current = taskId;
+            return new Set([taskId]);
+        });
+    }, [visibleTasks]);
+    const handleGanttSelect = useCallback((taskId: number, additive: boolean) => handleSelect(taskId, additive ? 'toggle' : 'single'), [handleSelect]);
+
+    // Seçim, ekrandaki sıraya göre
+    const orderedSelection = useMemo(() => visibleTasks.filter(t => selectedIds.has(t.id)), [visibleTasks, selectedIds]);
+    const firstSelectedId = useCallback((): number | null => (orderedSelection[0]?.id ?? null), [orderedSelection]);
+
+    const openTaskInfo = useCallback((taskId: number) => { setContextMenu(null); setTaskDialog({ mode: 'edit', taskId }); }, []);
+
+    const handleTaskDialogSave = useCallback((taskData: Task | Omit<Task, 'id' | 'cost'>, options?: { insertAfterId: number | null }) => {
+        if ('id' in taskData && (taskData as Task).id > 0) {
+            handleUpdateTask(taskData as Task);
+        } else {
+            const { parentId, ...rest } = taskData as Omit<Task, 'id' | 'cost'>;
+            handleAddTask(rest as Omit<Task, 'id' | 'cost' | 'parentId'>, { parentId, insertAfterId: options?.insertAfterId });
+        }
+        setTaskDialog(null);
+    }, [handleUpdateTask, handleAddTask]);
+
+    // Yeni görev: seçili görevin altına (ya da alt görevi olarak); seçim yoksa listenin sonuna
+    const insertNewTask = useCallback((opts: { asChild?: boolean; milestone?: boolean; name?: string; atEnd?: boolean }) => {
+        setContextMenu(null);
+        const sel = opts.atEnd ? undefined : orderedSelection[orderedSelection.length - 1];
+        const last = visibleTasks[visibleTasks.length - 1];
+        let parentId: number | null = null;
+        let insertAfterId: number | null = null;
+        let start: Date;
+        if (sel && opts.asChild) {
+            parentId = sel.id;
+            const kids = processedTasks.filter(t => t.parentId === sel.id);
+            insertAfterId = kids.length ? kids[kids.length - 1].id : sel.id;
+            start = new Date(sel.start);
+        } else if (sel) {
+            parentId = sel.parentId;
+            // seçili görevin tüm alt ağacından sonra ekle
+            const desc = getTaskAndAllDescendants(sel.id, tasks);
+            const lastDesc = [...tasks].reverse().find(t => desc.includes(t.id));
+            insertAfterId = lastDesc ? lastDesc.id : sel.id;
+            start = new Date(sel.isSummary ? sel.start : sel.start);
+        } else if (last) {
+            parentId = last.parentId;
+            insertAfterId = null;
+            start = new Date(last.start);
+        } else {
+            start = startOfDay(new Date());
+        }
+        let guard = 0;
+        while (!isWorkingDay(start, calendarSettings) && guard++ < 30) start = d3.timeDay.offset(start, 1);
+        const end = opts.milestone ? new Date(start) : new Date(start);
+        const newTask: Omit<Task, 'id' | 'parentId' | 'cost'> = {
+            name: opts.name || (opts.milestone ? 'Yeni kilometre taşı' : 'Yeni görev'),
+            start: startOfDay(start), end: startOfDay(end), progress: 0, dependencies: [], priority: 'Medium', status: 'Not Started',
+            taskType: TaskType.FixedDuration, work: opts.milestone ? 0 : calendarSettings.hoursPerDay, isMilestone: !!opts.milestone,
+            resourceAssignments: [], fixedCost: 0, actualCost: 0, baselineStart: null, baselineEnd: null, baselineCost: null, baselineWork: null,
+        };
+        handleAddTask(newTask, { parentId, insertAfterId });
+        if (parentId !== null && collapsedTasks.has(parentId)) toggleTaskCollapse(parentId);
+        notify(opts.name ? `"${opts.name}" eklendi.` : 'Görev eklendi. Adını değiştirmek için çift tıklayın.');
+    }, [orderedSelection, visibleTasks, processedTasks, tasks, calendarSettings, handleAddTask, getTaskAndAllDescendants, collapsedTasks, toggleTaskCollapse, notify]);
+
+    const handleQuickAdd = useCallback((name: string) => insertNewTask({ name, atEnd: true }), [insertNewTask]);
+
+    // Yeni eklenen görevi seç
+    const prevMaxIdRef = useRef<number>(0);
+    useEffect(() => {
+        const maxId = tasks.reduce((m, t) => Math.max(m, t.id), 0);
+        if (prevMaxIdRef.current && maxId > prevMaxIdRef.current) {
+            setSelectedIds(new Set([maxId]));
+            selectionAnchorRef.current = maxId;
+        }
+        prevMaxIdRef.current = maxId;
+    }, [tasks]);
+    useEffect(() => { prevMaxIdRef.current = 0; }, [activeProjectId]);
+
+    // Girinti: görev, kendinden önceki kardeşinin son alt görevi olur
+    const prevSiblingOf = (list: Task[], t: Task): Task | undefined => {
+        const sibs = list.filter(x => x.parentId === t.parentId);
+        const i = sibs.findIndex(x => x.id === t.id);
+        return i > 0 ? sibs[i - 1] : undefined;
+    };
+    const selectedRoots = useMemo(() => {
+        // Seçili bir üst görevin alt görevleri ayrıca taşınmaz (üstüyle birlikte gider)
+        const sel = new Set(orderedSelection.map(t => t.id));
+        const byId = new Map<number, Task>(tasks.map(t => [t.id, t]));
+        return orderedSelection.filter(t => {
+            let p = byId.get(t.id)?.parentId ?? null;
+            while (p !== null) { if (sel.has(p)) return false; p = byId.get(p)?.parentId ?? null; }
+            return true;
+        });
+    }, [orderedSelection, tasks]);
+    const canIndent = selectedRoots.length > 0 && selectedRoots.every(t => !!prevSiblingOf(tasks, t));
+    const canOutdent = selectedRoots.length > 0 && selectedRoots.every(t => t.parentId !== null);
+
+    const indentSelected = useCallback(() => {
+        setContextMenu(null);
+        if (!selectedRoots.length) return;
+        performUndoableAction(p => {
+            let list = p.tasks;
+            for (const r of selectedRoots) {
+                const cur = list.find(x => x.id === r.id);
+                if (!cur) continue;
+                const prev = prevSiblingOf(list, cur);
+                if (!prev) continue;
+                list = list.map(x => (x.id === cur.id ? { ...x, parentId: prev.id } : x));
+                // Görev ile yeni üst görevleri arasındaki bağlar geçersiz olur → kaldır
+                const ancestors = new Set<number>();
+                for (let a: number | null = prev.id; a !== null; a = list.find(x => x.id === a)?.parentId ?? null) { if (ancestors.has(a)) break; ancestors.add(a); }
+                const moved = new Set(getTaskAndAllDescendants(cur.id, list));
+                list = list.map(x => {
+                    if (moved.has(x.id)) { const deps = x.dependencies.filter(d => !ancestors.has(d.predecessorId)); return deps.length === x.dependencies.length ? x : { ...x, dependencies: deps }; }
+                    if (ancestors.has(x.id)) { const deps = x.dependencies.filter(d => !moved.has(d.predecessorId)); return deps.length === x.dependencies.length ? x : { ...x, dependencies: deps }; }
+                    return x;
+                });
+            }
+            const collapsed = (p.collapsedTasks || []).filter(id => !selectedRoots.some(r => prevSiblingOf(p.tasks, r)?.id === id));
+            return { ...p, tasks: list, collapsedTasks: collapsed };
+        });
+    }, [selectedRoots, performUndoableAction, getTaskAndAllDescendants]);
+
+    const outdentSelected = useCallback(() => {
+        setContextMenu(null);
+        if (!selectedRoots.length) return;
+        performUndoableAction(p => {
+            let list = p.tasks;
+            for (const r of [...selectedRoots].reverse()) {
+                const cur = list.find(x => x.id === r.id);
+                if (!cur || cur.parentId === null) continue;
+                const parent = list.find(x => x.id === cur.parentId);
+                list = list.map(x => (x.id === cur.id ? { ...x, parentId: parent?.parentId ?? null } : x));
+                // Görevi, eski üst görevin alt ağacının hemen arkasına taşı (sıra korunur)
+                if (parent) {
+                    const subtree = new Set(getTaskAndAllDescendants(parent.id, list));
+                    const moving = new Set(getTaskAndAllDescendants(cur.id, list));
+                    const rest = list.filter(x => !moving.has(x.id));
+                    let lastIdx = -1;
+                    rest.forEach((x, i) => { if (subtree.has(x.id)) lastIdx = i; });
+                    const block = list.filter(x => moving.has(x.id));
+                    list = [...rest.slice(0, lastIdx + 1), ...block, ...rest.slice(lastIdx + 1)];
+                }
+            }
+            return { ...p, tasks: list };
+        });
+    }, [selectedRoots, performUndoableAction, getTaskAndAllDescendants]);
+
+    const handleAddDependency = useCallback((predecessorId: number, successorId: number) => {
+        const succ = tasks.find(t => t.id === successorId);
+        if (!succ) return;
+        if (succ.dependencies.some(d => d.predecessorId === predecessorId)) { notify('Bu bağ zaten var.'); return; }
+        const problem = linkProblem(tasks, predecessorId, successorId);
+        if (problem) { notify(problem); return; }
+        handleUpdateTask({ ...succ, dependencies: [...succ.dependencies, { predecessorId, type: DependencyType.FS, lag: 0 }] });
+        const ord = rowOrdinals(tasks);
+        notify(`Bağ eklendi: ${ord.get(predecessorId)} → ${ord.get(successorId)} (Bitiş → Başlangıç)`);
+    }, [tasks, handleUpdateTask, notify]);
+
+    const linkSelected = useCallback(() => {
+        setContextMenu(null);
+        const chain = orderedSelection.filter(t => !t.isSummary);
+        if (chain.length < 2) { notify('Bağlamak için en az iki (özet olmayan) görev seçin.'); return; }
+        performUndoableAction(p => {
+            let list = p.tasks;
+            let added = 0;
+            for (let i = 1; i < chain.length; i++) {
+                const pred = chain[i - 1].id, succ = chain[i].id;
+                const s = list.find(t => t.id === succ)!;
+                if (s.dependencies.some(d => d.predecessorId === pred) || linkProblem(list, pred, succ)) continue;
+                const updated = { ...s, dependencies: [...s.dependencies, { predecessorId: pred, type: DependencyType.FS, lag: 0 }] };
+                list = list.map(t => (t.id === succ ? updated : t));
+                if (p.calendarSettings.autoScheduleEnabled !== false) list = autoSchedule(updated, list, p.calendarSettings);
+                added++;
+            }
+            setTimeout(() => notify(added ? `${added} bağ eklendi.` : 'Yeni bağ eklenmedi (zaten bağlı ya da döngü oluşurdu).'), 0);
+            return { ...p, tasks: list };
+        });
+    }, [orderedSelection, performUndoableAction, notify]);
+
+    const unlinkSelected = useCallback(() => {
+        setContextMenu(null);
+        const ids = new Set(orderedSelection.map(t => t.id));
+        if (!ids.size) return;
+        const single = ids.size === 1 ? Array.from(ids)[0] : null;
+        performUndoableAction(p => ({
+            ...p,
+            tasks: p.tasks.map(t => {
+                const deps = single !== null
+                    ? (t.id === single ? [] : t.dependencies.filter(d => d.predecessorId !== single))
+                    : (ids.has(t.id) ? t.dependencies.filter(d => !ids.has(d.predecessorId)) : t.dependencies);
+                return deps.length === t.dependencies.length ? t : { ...t, dependencies: deps };
+            }),
+        }));
+        notify(single !== null ? 'Görevin tüm bağları kaldırıldı.' : 'Seçili görevler arasındaki bağlar kaldırıldı.');
+    }, [orderedSelection, performUndoableAction, notify]);
+
+    const deleteSelected = useCallback(() => {
+        setContextMenu(null);
+        if (!selectedRoots.length) return;
+        const withChildren = selectedRoots.some(t => t.isSummary);
+        const msg = selectedRoots.length === 1
+            ? `"${selectedRoots[0].name}" silinsin mi?${withChildren ? ' Alt görevleri de silinecek.' : ''}`
+            : `${selectedRoots.length} görev silinsin mi?${withChildren ? ' Alt görevleri de silinecek.' : ''}`;
+        if (!window.confirm(msg + '\n(Geri al ile geri getirebilirsiniz.)')) return;
+        performUndoableAction(project => {
+            const ids = new Set(selectedRoots.flatMap(r => getTaskAndAllDescendants(r.id, project.tasks)));
+            return {
+                ...project,
+                tasks: project.tasks.filter(t => !ids.has(t.id)).map(t => ({ ...t, dependencies: t.dependencies.filter(d => !ids.has(d.predecessorId)) })),
+                collapsedTasks: (project.collapsedTasks || []).filter(id => !ids.has(id)),
+            };
+        });
+        setSelectedIds(new Set());
+    }, [selectedRoots, performUndoableAction, getTaskAndAllDescendants]);
+
+    const setProgressSelected = useCallback((progress: number) => {
+        setContextMenu(null);
+        orderedSelection.filter(t => !t.isSummary).forEach(t => {
+            const raw = tasks.find(x => x.id === t.id);
+            if (raw && raw.progress !== progress) handleUpdateTask({ ...raw, progress });
+        });
+    }, [orderedSelection, tasks, handleUpdateTask]);
+
+    const toggleAutoSchedule = useCallback(() => {
+        const on = calendarSettings.autoScheduleEnabled === false;
+        updateCalendarSettingsAndTasks({ ...calendarSettings, autoScheduleEnabled: on });
+        notify(on ? 'Otomatik zamanlama açık: bir görev kayınca ona bağlı görevler de kayar.' : 'Otomatik zamanlama kapalı: tarihler elle girildiği gibi kalır.');
+    }, [calendarSettings, updateCalendarSettingsAndTasks, notify]);
+
+    // ───────────────────────── Gantt kaydırma ─────────────────────────
+    const scrollGanttToDate = useCallback((date: Date) => {
+        const el = mainRef.current;
+        if (!el) return;
+        const ppd = pixelsPerDay(viewMode);
+        const x = d3.timeDay.count(timeDomain[0], startOfDay(date)) * ppd;
+        if (x < 0 || date > d3.timeDay.offset(timeDomain[1], 60)) { notify('Bu tarih proje zaman aralığının dışında.'); }
+        el.scrollTo({ left: Math.max(0, x - el.clientWidth / 3), behavior: 'smooth' });
+    }, [viewMode, timeDomain, notify]);
+
+    // Ctrl + tekerlek: ölçeği değiştir
+    const handleGanttWheel = useCallback((e: React.WheelEvent) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        const order = [ViewMode.Year, ViewMode.Month, ViewMode.Week, ViewMode.Day];
+        const i = order.indexOf(viewMode);
+        const next = order[Math.max(0, Math.min(order.length - 1, i + (e.deltaY < 0 ? 1 : -1)))];
+        if (next !== viewMode) setViewMode(next);
+    }, [viewMode]);
+
+    // Ölçek değişince seçili göreve ya da bugüne odaklan
+    const didInitialScrollRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (mainView !== MainView.Gantt || !activeProjectId) return;
+        const key = `${activeProjectId}:${viewMode}`;
+        if (didInitialScrollRef.current === key) return;
+        didInitialScrollRef.current = key;
+        requestAnimationFrame(() => {
+            const sel = processedTasks.find(t => t.id === orderedSelection[0]?.id);
+            const today = new Date();
+            const target = sel ? sel.start : (today >= timeDomain[0] && today <= timeDomain[1] ? today : timeDomain[0]);
+            scrollGanttToDate(target);
+        });
+    }, [mainView, activeProjectId, viewMode, processedTasks, orderedSelection, timeDomain, scrollGanttToDate]);
+
+    // Gantt kabının genişliği (zaman ölçeği en az bu kadar uzar)
+    useEffect(() => {
+        const el = mainRef.current;
+        if (!el) return;
+        const measure = () => setGanttViewport(v => (v.width === el.clientWidth && v.height === el.clientHeight ? v : { width: el.clientWidth, height: el.clientHeight }));
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        measure();
+        return () => ro.disconnect();
+    }, [mainView, activeProjectId, isLoaded]);
+
+    // ───────────────────────── Klavye kısayolları ─────────────────────────
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const el = e.target as HTMLElement;
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+            if (taskDialog || isCalendarModalOpen || isResourceSheetOpen || isReportModalOpen) return;
+            const ctrl = e.ctrlKey || e.metaKey;
+            if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); handleUndo(); return; }
+            if (ctrl && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); handleRedo(); return; }
+            if (e.key === 'Escape') { setContextMenu(null); setShowShortcuts(false); setSelectedIds(new Set()); return; }
+            if (e.key === '?') { setShowShortcuts(v => !v); return; }
+            if (mainView !== MainView.Gantt) return;
+            if (ctrl && e.key.toLowerCase() === 'a') { e.preventDefault(); setSelectedIds(new Set(visibleTasks.map(t => t.id))); return; }
+            if (e.key === 'Insert' || (e.altKey && e.key === 'Enter')) { e.preventDefault(); insertNewTask({}); return; }
+            if (e.key === 'Delete') { e.preventDefault(); deleteSelected(); return; }
+            if (e.altKey && e.shiftKey && e.key === 'ArrowRight') { e.preventDefault(); indentSelected(); return; }
+            if (e.altKey && e.shiftKey && e.key === 'ArrowLeft') { e.preventDefault(); outdentSelected(); return; }
+            if (e.key === 'F2' && ctrl && e.shiftKey) { e.preventDefault(); unlinkSelected(); return; }
+            if (e.key === 'F2' && ctrl) { e.preventDefault(); linkSelected(); return; }
+            if (e.key === 'F2' && e.shiftKey) { const id = firstSelectedId(); if (id !== null) { e.preventDefault(); openTaskInfo(id); } return; }
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (!visibleTasks.length) return;
+                e.preventDefault();
+                const curId = selectionAnchorRef.current ?? firstSelectedId();
+                const i = curId === null ? -1 : visibleTasks.findIndex(t => t.id === curId);
+                const ni = Math.max(0, Math.min(visibleTasks.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+                const id = visibleTasks[ni].id;
+                if (e.shiftKey) {
+                    setSelectedIds(prev => new Set([...Array.from(prev), id]));
+                    selectionAnchorRef.current = id;
+                } else handleSelect(id, 'single');
+                const row = sidebarRef.current;
+                if (row) {
+                    const top = ni * 30, h = row.clientHeight - 48 - 30;
+                    if (top < row.scrollTop) row.scrollTop = top;
+                    else if (top > row.scrollTop + h) row.scrollTop = top - h;
+                }
+                return;
+            }
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                const t = processedTasks.find(x => x.id === firstSelectedId());
+                if (t?.isSummary && (collapsedTasks.has(t.id) === (e.key === 'ArrowRight'))) { e.preventDefault(); toggleTaskCollapse(t.id); }
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [taskDialog, isCalendarModalOpen, isResourceSheetOpen, isReportModalOpen, mainView, visibleTasks, processedTasks, collapsedTasks, handleUndo, handleRedo,
+        insertNewTask, deleteSelected, indentSelected, outdentSelected, linkSelected, unlinkSelected, firstSelectedId, openTaskInfo, handleSelect, toggleTaskCollapse]);
+
+    // Durum çubuğu özeti
+    const projectSummary = useMemo(() => {
+        const leaves = processedTasks.filter(t => !t.isSummary);
+        if (!processedTasks.length) return null;
+        const start = new Date(Math.min(...processedTasks.map(t => t.start.getTime())));
+        const end = new Date(Math.max(...processedTasks.map(t => t.end.getTime())));
+        const weight = (t: ProcessedTask) => Math.max(1, calculateDuration(t.start, t.end, calendarSettings));
+        const totalW = leaves.reduce((s, t) => s + weight(t), 0);
+        const progress = totalW ? leaves.reduce((s, t) => s + weight(t) * t.progress, 0) / totalW : 0;
+        const roots = processedTasks.filter(t => t.parentId === null);
+        return {
+            start, end,
+            duration: calculateDuration(start, end, calendarSettings),
+            progress,
+            taskCount: leaves.length,
+            overdue: leaves.filter(t => t.isOverdue).length,
+            critical: showCriticalPath ? leaves.filter(t => criticalPath.has(t.id)).length : null,
+            cost: roots.reduce((s, t) => s + t.cost, 0),
+        };
+    }, [processedTasks, calendarSettings, criticalPath, showCriticalPath]);
 
     if (!isLoaded || !activeProjectId) {
         return <Dashboard 
@@ -1811,50 +2314,59 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
             default:
                 return (
                     <>
-                        <div 
+                        <div
                             ref={sidebarRef}
                             onScroll={() => handleScroll('sidebar')}
                             style={{ width: `${sidebarWidth}px` }}
-                            className="flex-shrink-0 overflow-auto">
-                            <TaskList 
-                                tasks={visibleTasks} 
+                            className="flex-shrink-0 overflow-auto bg-white gantt-scroll">
+                            <TaskList
+                                tasks={visibleTasks}
                                 allTasks={processedTasks}
                                 resources={resources}
-                                onUpdateTask={handleUpdateTask} 
-                                onDeleteTask={handleDeleteTask} 
-                                onAddTask={handleAddTask}
+                                onUpdateTask={handleUpdateTask}
                                 onToggleCollapse={toggleTaskCollapse}
-                                onIndent={handleIndentTask}
-                                onOutdent={handleOutdentTask}
                                 onReorderTask={handleReorderTask}
                                 calendarSettings={calendarSettings}
                                 allocationData={allocationData}
                                 columnVisibility={columnVisibility}
                                 onColumnVisibilityChange={onColumnVisibilityChange}
-                                onFooterHeightChange={setSidebarFooterHeight}
+                                selectedIds={selectedIds}
+                                onSelect={handleSelect}
+                                onOpenTask={openTaskInfo}
+                                onContextMenu={(taskId, x, y) => setContextMenu({ taskId, x, y })}
+                                onQuickAdd={handleQuickAdd}
+                                criticalPath={showCriticalPath ? criticalPath : EMPTY_SET}
+                                onNotify={notify}
                             />
                         </div>
-                        <div 
+                        <div
                             onMouseDown={handleMouseDownOnGanttSplitter}
-                            className="w-1.5 flex-shrink-0 cursor-col-resize bg-gray-300 hover:bg-blue-500 transition-colors duration-150"
+                            title="Sürükleyerek tablo genişliğini ayarlayın"
+                            className="w-1 flex-shrink-0 cursor-col-resize bg-slate-200 hover:bg-blue-500 transition-colors duration-150"
                         ></div>
                         <div
                             ref={mainRef}
                             onScroll={() => handleScroll('main')}
                             onMouseDown={handleGanttMouseDown}
                             onContextMenu={handleGanttContextMenu}
-                            className="flex-grow overflow-auto gantt-chart-container" id="gantt-container">
-                            <GanttChart 
-                                tasks={visibleTasks} 
+                            onWheel={handleGanttWheel}
+                            className="flex-grow overflow-auto gantt-chart-container gantt-scroll bg-white" id="gantt-container">
+                            <GanttChart
+                                tasks={visibleTasks}
                                 allTasks={processedTasks}
                                 viewMode={viewMode}
+                                timeDomain={timeDomain}
+                                minWidth={ganttViewport.width}
+                                minHeight={ganttViewport.height}
                                 onUpdateTask={handleUpdateTask}
-                                onReorderTask={handleReorderTask}
-                                criticalPath={showCriticalPath ? criticalPath : new Set()}
+                                onAddDependency={handleAddDependency}
+                                criticalPath={showCriticalPath ? criticalPath : EMPTY_SET}
                                 calendarSettings={calendarSettings}
                                 theme={currentTheme}
                                 showProgress={showProgressOnBars}
-                                footerHeight={sidebarFooterHeight}
+                                selectedIds={selectedIds}
+                                onSelect={handleGanttSelect}
+                                onOpenTask={openTaskInfo}
                             />
                         </div>
                     </>
@@ -1863,36 +2375,100 @@ let maxId = Math.max(0, ...Object.values(allProjects).flatMap((p: Project) => p.
     };
 
     return (
-        <div className="h-screen w-screen bg-gray-50 text-gray-800 flex flex-col font-sans overflow-hidden">
-            <Toolbar 
-                onViewModeChange={setViewMode}
-                currentViewMode={viewMode}
-                onToggleCriticalPath={toggleCriticalPath}
-                isCriticalPathActive={showCriticalPath}
-                onOpenCalendarSettings={() => setIsCalendarModalOpen(true)}
-                onOpenResourceSheet={() => setIsResourceSheetOpen(true)}
-                onOpenReport={() => setIsReportModalOpen(true)}
+        <div className="h-screen w-screen bg-slate-50 text-slate-800 flex flex-col font-sans overflow-hidden">
+            <Ribbon
+                projects={Object.values(allProjects)}
+                activeProject={activeProject!}
+                onSelectProject={handleSelectProject}
+                onOpenDashboard={() => setMainView(MainView.Dashboard)}
+                onNewProject={handleCreateNewProject}
                 mainView={mainView}
                 onMainViewChange={setMainView}
-                onSetBaseline={handleSetBaseline}
-                onClearBaseline={handleClearBaseline}
-                currentThemeName={themeName}
-                onThemeChange={onThemeChange}
-                onToggleShowProgress={toggleShowProgressOnBars}
-                isShowProgressActive={showProgressOnBars}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                selectionCount={selectedIds.size}
+                canIndent={canIndent}
+                canOutdent={canOutdent}
+                canLink={selectedIds.size >= 2}
+                canUnlink={selectedIds.size >= 1}
+                onAddTask={() => insertNewTask({})}
+                onAddSubtask={() => insertNewTask({ asChild: true })}
+                onAddMilestone={() => insertNewTask({ milestone: true })}
+                onIndent={indentSelected}
+                onOutdent={outdentSelected}
+                onLink={linkSelected}
+                onUnlink={unlinkSelected}
+                onTaskInfo={() => { const id = firstSelectedId(); if (id !== null) openTaskInfo(id); }}
+                onDelete={deleteSelected}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 canUndo={undoStack.length > 0}
                 canRedo={redoStack.length > 0}
+                autoSchedule={calendarSettings.autoScheduleEnabled !== false}
+                onToggleAutoSchedule={toggleAutoSchedule}
+                showCritical={showCriticalPath}
+                onToggleCritical={toggleCriticalPath}
+                hasBaseline={tasks.some(t => t.baselineStart)}
+                onSetBaseline={handleSetBaseline}
+                onClearBaseline={handleClearBaseline}
+                onGoToday={() => scrollGanttToDate(new Date())}
+                onGoToSelected={() => { const t = processedTasks.find(x => x.id === firstSelectedId()); if (t) scrollGanttToDate(t.start); }}
+                showProgress={showProgressOnBars}
+                onToggleProgress={toggleShowProgressOnBars}
+                themeName={themeName}
+                onThemeChange={onThemeChange}
+                onOpenResources={() => setIsResourceSheetOpen(true)}
+                onOpenCalendar={() => setIsCalendarModalOpen(true)}
+                onOpenReport={() => setIsReportModalOpen(true)}
                 onImport={handleImportClick}
                 onExportXml={handleExportXml}
                 onExportJson={handleExportJson}
-                onExportGanttPdf={handleExportGanttPdf}
+                onExportPdf={handleExportGanttPdf}
                 onExportExcel={handleExportExcel}
+                onShowShortcuts={() => setShowShortcuts(true)}
             />
             <div className="flex-grow flex overflow-hidden">
                 {renderMainView()}
             </div>
+            <StatusBar summary={projectSummary} autoSchedule={calendarSettings.autoScheduleEnabled !== false} selection={selectedIds.size} />
+            {taskDialog && (
+                <TaskModal
+                    task={taskDialog.mode === 'edit' ? processedTasks.find(t => t.id === taskDialog.taskId) || null : null}
+                    tasks={processedTasks}
+                    resources={resources}
+                    onSave={handleTaskDialogSave}
+                    onClose={() => setTaskDialog(null)}
+                    isSummary={taskDialog.mode === 'edit' ? !!processedTasks.find(t => t.id === taskDialog.taskId)?.isSummary : false}
+                    calendarSettings={calendarSettings}
+                    creationParentId={taskDialog.mode === 'create' ? taskDialog.parentId : null}
+                    creationInsertAfterId={taskDialog.mode === 'create' ? taskDialog.insertAfterId : null}
+                />
+            )}
+            {contextMenu && (
+                <TaskContextMenu
+                    x={contextMenu.x} y={contextMenu.y}
+                    task={processedTasks.find(t => t.id === contextMenu.taskId) || null}
+                    selectionCount={selectedIds.size}
+                    onClose={() => setContextMenu(null)}
+                    actions={{
+                        info: () => openTaskInfo(contextMenu.taskId),
+                        addBelow: () => insertNewTask({}),
+                        addChild: () => insertNewTask({ asChild: true }),
+                        indent: indentSelected,
+                        outdent: outdentSelected,
+                        link: linkSelected,
+                        unlink: unlinkSelected,
+                        setProgress: setProgressSelected,
+                        remove: deleteSelected,
+                    }}
+                />
+            )}
+            {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
+            {toast && (
+                <div className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[60] max-w-xl rounded-lg bg-slate-900 px-4 py-2.5 text-[13px] text-white shadow-xl" role="status">
+                    {toast}
+                </div>
+            )}
             {isCalendarModalOpen && (
                 <CalendarModal 
                     currentSettings={calendarSettings}

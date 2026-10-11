@@ -4,7 +4,7 @@ import { calculateDuration } from '../services/ganttService';
 import { loadLogo, buildLetterheadHTML } from '../services/pdfHeader';
 
 // d3 type declaration
-declare const d3: any;
+import * as d3 from 'd3';
 
 interface NetworkDiagramViewProps {
     tasks: ProcessedTask[];
@@ -236,8 +236,8 @@ const NetworkDiagramView: React.FC<NetworkDiagramViewProps> = ({ tasks, critical
         await new Promise(r => setTimeout(r, 180)); // logo/yerleşim için kısa bekleme
 
         try {
-            const { jsPDF } = (window as any).jspdf;
-            const html2canvas = (window as any).html2canvas;
+            const { jsPDF } = await import('jspdf');
+            const html2canvas = (await import('html2canvas')).default;
             const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
             const imgData = canvas.toDataURL('image/png');
 

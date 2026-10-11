@@ -240,7 +240,7 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, tasks, resources, onSave, o
         end.setMinutes(end.getMinutes() + end.getTimezoneOffset());
 
         if (end < start && !isSummary && !formData.isMilestone) {
-            alert("End date cannot be before start date.");
+            alert("Bitiş tarihi başlangıçtan önce olamaz.");
             return;
         }
         
@@ -277,257 +277,247 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, tasks, resources, onSave, o
 
     const otherTasks = tasks.filter(t => t.id !== task?.id);
     const availableResources = resources.filter(r => !formData.resourceAssignments.some(a => a.resourceId === r.id));
-    
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
     const positionOptions = useMemo(() => {
         const siblings = tasks.filter(t => t.parentId === formData.parentId);
         if (siblings.length === 0) {
-            return [<option key="first" value="first">As first child</option>];
+            return [<option key="first" value="first">İlk alt görev olarak</option>];
         }
         return [
-            <option key="first" value="first">At the beginning</option>,
-            ...siblings.map(s => <option key={s.id} value={`after-${s.id}`}>After "{s.name}"</option>),
-            <option key="last" value="last">At the end</option>
+            <option key="first" value="first">En başa</option>,
+            ...siblings.map(s => <option key={s.id} value={`after-${s.id}`}>"{s.name}" görevinden sonra</option>),
+            <option key="last" value="last">En sona</option>
         ];
     }, [formData.parentId, tasks]);
-    
+
+    const inputCls = "w-full h-9 px-2.5 bg-white rounded-md border border-slate-300 text-[14px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-500";
+    const labelCls = "block mb-1 text-[12px] font-medium text-slate-600";
+    const TYPE_LABEL: { [k: string]: string } = { [TaskType.FixedUnits]: 'Sabit birim (iş odaklı)', [TaskType.FixedDuration]: 'Sabit süre' };
+    const DEP_LABEL: { [k: string]: string } = {
+        [DependencyType.FS]: 'Bitiş → Başlangıç (BS)', [DependencyType.SS]: 'Başlangıç → Başlangıç (BB)',
+        [DependencyType.FF]: 'Bitiş → Bitiş (BiBi)', [DependencyType.SF]: 'Başlangıç → Bitiş (BaBi)',
+    };
+    const RES_TYPE: { [k: string]: string } = { [ResourceType.Work]: 'iş', [ResourceType.Material]: 'malzeme', [ResourceType.Cost]: 'maliyet' };
+
     const renderResourceValueInput = (assignment: ResourceAssignment, index: number) => {
         const resource = resourceMap.get(assignment.resourceId);
         if (!resource) return null;
-
         const commonProps = {
             type: "number",
             value: assignment.value,
             onChange: (e: React.ChangeEvent<HTMLInputElement>) => handleResourceAssignmentChange(index, parseFloat(e.target.value) || 0),
-            className: "w-full p-2 bg-gray-50 rounded border border-gray-300",
+            className: `${inputCls} pr-14`,
             min: "0"
         };
-
+        const unit = (u: string) => <span className="absolute right-3 top-2 text-slate-400 text-[13px] pointer-events-none">{u}</span>;
         switch (resource.type) {
-            case ResourceType.Work:
-                return <div className="relative"><input {...commonProps} step="1" /><span className="absolute right-3 top-2.5 text-gray-500 text-sm pointer-events-none">%</span></div>;
-            case ResourceType.Material:
-                return <div className="relative"><input {...commonProps} step="0.1" /><span className="absolute right-3 top-2.5 text-gray-500 text-sm pointer-events-none">{(resource as MaterialResource).materialLabel}</span></div>;
-            case ResourceType.Cost:
-                return <div className="relative"><input {...commonProps} step="0.01" /><span className="absolute left-3 top-2.5 text-gray-500 text-sm pointer-events-none">$</span></div>;
+            case ResourceType.Work: return <div className="relative"><input {...commonProps} step="1" />{unit('%')}</div>;
+            case ResourceType.Material: return <div className="relative"><input {...commonProps} step="0.1" />{unit((resource as MaterialResource).materialLabel)}</div>;
+            case ResourceType.Cost: return <div className="relative"><input {...commonProps} step="0.01" />{unit('tutar')}</div>;
         }
     };
 
+    const tabs: [string, string][] = [['general', 'Genel'], ['dependencies', `Öncüller${formData.dependencies.length ? ` (${formData.dependencies.length})` : ''}`], ['resources', `Kaynaklar${formData.resourceAssignments.length ? ` (${formData.resourceAssignments.length})` : ''}`]];
+
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-3xl text-gray-800 max-h-[90vh] flex flex-col">
-                <h2 className="text-xl font-bold mb-4 flex-shrink-0">{task ? `Edit Task: ${task.name}` : 'Add New Task'}</h2>
-                 {isSummary && (
-                    <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-md p-3 mb-4">
-                        This is a summary task. Its dates and progress are calculated automatically from its subtasks.
+        <div className="fixed inset-0 bg-slate-900/40 flex justify-center items-center z-50 p-4" onMouseDown={onClose}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl text-slate-800 max-h-[90vh] flex flex-col" onMouseDown={e => e.stopPropagation()}>
+                <div className="px-6 pt-5 pb-0 flex-shrink-0">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <div className="text-[12px] font-medium text-slate-400">{task ? (isSummary ? 'Özet görev' : formData.isMilestone ? 'Kilometre taşı' : 'Görev') : 'Yeni görev'}{task?.wbs ? ` · ${task.wbs}` : ''}</div>
+                            <h2 className="text-[17px] font-semibold text-slate-900 truncate">{task ? task.name : 'Görev ekle'}</h2>
+                        </div>
+                        <button type="button" onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Kapat (Esc)">✕</button>
                     </div>
-                )}
-                <div className="border-b border-gray-200 mb-4 flex-shrink-0">
-                    <nav className="-mb-px flex space-x-6">
-                        <button onClick={() => setActiveTab('general')} className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'general' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-400'}`}>General</button>
-                        <button onClick={() => setActiveTab('dependencies')} className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'dependencies' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-400'}`}>Dependencies</button>
-                        <button onClick={() => setActiveTab('resources')} className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'resources' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-400'}`}>Resources</button>
+                    {isSummary && (
+                        <div className="mt-3 bg-blue-50 border border-blue-100 text-blue-800 text-[13px] rounded-md px-3 py-2">
+                            Özet görevin tarihleri ve tamamlanma oranı alt görevlerinden hesaplanır.
+                        </div>
+                    )}
+                    <nav className="mt-4 -mb-px flex gap-5 border-b border-slate-200">
+                        {tabs.map(([id, label]) => (
+                            <button key={id} type="button" onClick={() => setActiveTab(id)}
+                                className={`pb-2.5 border-b-2 text-[13px] font-medium ${activeTab === id ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{label}</button>
+                        ))}
                     </nav>
                 </div>
-                <form onSubmit={handleSubmit} className="flex-grow overflow-y-auto pr-2">
+                <form onSubmit={handleSubmit} className="flex-grow overflow-y-auto px-6 py-5">
                     {activeTab === 'general' && (
                         <div className="space-y-4">
-                            <div className="flex justify-between items-center">
+                            <div className="flex items-end gap-4">
                                 <div className="flex-grow">
-                                    <label className="block mb-1 text-sm font-medium">Task Name</label>
-                                    <input type="text" name="name" value={formData.name} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300 focus:ring-blue-500 focus:border-blue-500" required />
+                                    <label className={labelCls}>Görev adı</label>
+                                    <input type="text" name="name" value={formData.name} onChange={handleChange} className={inputCls} required autoFocus />
                                 </div>
-                                <div className="ml-4 pt-6 flex items-center">
-                                    <input type="checkbox" id="isMilestone" name="isMilestone" checked={formData.isMilestone} onChange={handleChange} className="h-4 w-4 rounded bg-gray-200 border-gray-400 text-blue-600 focus:ring-blue-500" disabled={isSummary}/>
-                                    <label htmlFor="isMilestone" className="ml-2 text-sm font-medium">Mark as Milestone</label>
-                                </div>
+                                <label className="flex items-center gap-2 h-9 text-[13px] text-slate-700 whitespace-nowrap">
+                                    <input type="checkbox" name="isMilestone" checked={formData.isMilestone} onChange={handleChange} className="h-4 w-4 rounded border-slate-300 text-blue-600" disabled={isSummary} />
+                                    Kilometre taşı
+                                </label>
                             </div>
-                             {!task && (
-                                <div>
-                                    <label className="block mb-2 text-sm font-medium">Placement</label>
-                                    <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 rounded-md border">
-                                        <div>
-                                            <label className="block mb-1 text-xs font-medium">Parent Task</label>
-                                            <select 
-                                                name="parentId" 
-                                                value={formData.parentId ?? ''} 
-                                                onChange={(e) => {
-                                                    const newParentId = e.target.value ? parseInt(e.target.value, 10) : null;
-                                                    updateFormData({ parentId: newParentId });
-                                                    setPositionValue('last');
-                                                }}
-                                                className="w-full p-2 bg-white rounded border border-gray-300 text-sm"
-                                            >
-                                                <option value="">(No Parent)</option>
-                                                {tasks.map(t => (
-                                                    <option key={t.id} value={t.id} style={{ paddingLeft: `${t.level * 10}px`}}>
-                                                       {t.wbs} {t.name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block mb-1 text-xs font-medium">Position</label>
-                                            <select 
-                                                value={positionValue} 
-                                                onChange={e => setPositionValue(e.target.value)}
-                                                className="w-full p-2 bg-white rounded border border-gray-300 text-sm"
-                                            >
-                                                {positionOptions}
-                                            </select>
-                                        </div>
+                            {!task && (
+                                <div className="grid grid-cols-2 gap-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <div>
+                                        <label className={labelCls}>Üst görev</label>
+                                        <select name="parentId" value={formData.parentId ?? ''}
+                                            onChange={(e) => { updateFormData({ parentId: e.target.value ? parseInt(e.target.value, 10) : null }); setPositionValue('last'); }}
+                                            className={inputCls}>
+                                            <option value="">(Üst görev yok)</option>
+                                            {tasks.map(t => <option key={t.id} value={t.id}>{t.wbs} {t.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className={labelCls}>Konum</label>
+                                        <select value={positionValue} onChange={e => setPositionValue(e.target.value)} className={inputCls}>{positionOptions}</select>
                                     </div>
                                 </div>
                             )}
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div>
-                                        <label className="block mb-1 text-sm font-medium">Start Date</label>
-                                        <input type="date" name="start" value={formData.start} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300 disabled:bg-gray-200" />
-                                    </div>
-                                    <div>
-                                        <label className="block mb-1 text-sm font-medium">End Date</label>
-                                        <input type="date" name="end" value={formData.end} onChange={handleChange} min={formData.start} className="w-full p-2 bg-gray-50 rounded border border-gray-300 disabled:bg-gray-200" />
-                                    </div>
-                                    <div>
-                                        <label className="block mb-1 text-sm font-medium">Duration</label>
-                                        <div className="relative">
-                                            <input type="number" name="duration" min="0" value={formData.duration} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300 disabled:bg-gray-200 pr-8" disabled={isSummary} />
-                                            <span className="absolute right-3 top-2.5 text-gray-500 text-sm pointer-events-none">d</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                    <div>
-                                        <label className="block mb-1 text-sm font-medium">Task Type</label>
-                                        <select name="taskType" value={formData.taskType} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300 disabled:bg-gray-200" disabled={isSummary || formData.isMilestone}>
-                                            {Object.values(TaskType).map(type => <option key={type} value={type}>{type}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="block mb-1 text-sm font-medium">Work (hours)</label>
-                                        <input type="number" name="work" min="0" step="0.1" value={formData.work} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300 disabled:bg-gray-200" disabled={isSummary} />
-                                    </div>
-                                    <div>
-                                        <label className="block mb-1 text-sm font-medium">Fixed Cost</label>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-2.5 text-gray-500 text-sm pointer-events-none">$</span>
-                                            <input type="number" name="fixedCost" value={formData.fixedCost} className="w-full p-2 pl-7 bg-gray-200 rounded border border-gray-300 cursor-not-allowed" readOnly />
-                                        </div>
-                                        <p className="text-xs text-gray-500 mt-1">Sabit maliyetler Proje Başlatma Belgesi'nin bütçe bölümünden yönetilir.</p>
-                                    </div>
-                                     <div>
-                                        <label className="block mb-1 text-sm font-medium">Actual Cost</label>
-                                         <div className="relative">
-                                            <span className="absolute left-3 top-2.5 text-gray-500 text-sm pointer-events-none">$</span>
-                                            <input type="number" name="actualCost" min="0" step="0.01" value={formData.actualCost} onChange={handleChange} className="w-full p-2 pl-7 bg-gray-50 rounded border border-gray-300 disabled:bg-gray-200" />
-                                        </div>
-                                    </div>
-                                </div>
-                                 <div className="col-span-3">
-                                    <label className="block mb-1 text-sm font-medium">Task Type Information</label>
-                                    <div className="text-xs text-gray-500 bg-gray-100 p-2 rounded-md space-y-1">
-                                        <p><strong className="text-gray-700">Fixed Units:</strong> Effort-driven. You set the total `Work` hours, and the `Duration` adjusts based on assigned resources.</p>
-                                        <p><strong className="text-gray-700">Fixed Duration:</strong> Time-driven. The `Duration` is fixed, and the total `Work` is calculated based on this duration and assigned resources.</p>
-                                    </div>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className={labelCls}>Başlangıç</label>
+                                    <input type="date" name="start" value={formData.start} onChange={handleChange} className={inputCls} disabled={isSummary} />
                                 </div>
                                 <div>
-                                    <label className="block mb-1 text-sm font-medium">Progress: {formData.progress}%</label>
-                                    <input type="range" name="progress" min="0" max="100" value={formData.progress} onChange={handleChange} className="w-full disabled:opacity-50" disabled={isSummary} />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block mb-1 text-sm font-medium">Status</label>
-                                    <select name="status" value={formData.status} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300">
-                                        <option>Not Started</option>
-                                        <option>In Progress</option>
-                                        <option>Completed</option>
-                                    </select>
+                                    <label className={labelCls}>Bitiş</label>
+                                    <input type="date" name="end" value={formData.end} onChange={handleChange} min={formData.start} className={inputCls} disabled={isSummary} />
                                 </div>
                                 <div>
-                                    <label className="block mb-1 text-sm font-medium">Priority</label>
-                                    <select name="priority" value={formData.priority} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300">
-                                        <option>Low</option>
-                                        <option>Medium</option>
-                                        <option>High</option>
-                                    </select>
-                                </div>
-                            </div>
-                            {/* Excel Gantt şablonu (PL130) sütunları: Responsible, Remarks, Report → Milestone Status */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block mb-1 text-sm font-medium">Responsible</label>
-                                    <input type="text" name="responsible" value={formData.responsible ?? ''} onChange={handleChange} placeholder="ör. Sanifoam / Customer" className="w-full p-2 bg-gray-50 rounded border border-gray-300" />
-                                </div>
-                                <div className="flex items-end pb-2">
-                                    <input type="checkbox" id="report" name="report" checked={!!formData.report} onChange={handleChange} className="h-4 w-4 rounded bg-gray-200 border-gray-400 text-blue-600 focus:ring-blue-500" />
-                                    <label htmlFor="report" className="ml-2 text-sm font-medium">Report (Milestone Status)</label>
+                                    <label className={labelCls}>Süre (iş günü)</label>
+                                    <input type="number" name="duration" min="0" value={formData.duration} onChange={handleChange} className={inputCls} disabled={isSummary} />
                                 </div>
                             </div>
                             <div>
-                                <label className="block mb-1 text-sm font-medium">Remarks (status sheet)</label>
-                                <input type="text" name="remarks" value={formData.remarks ?? ''} onChange={handleChange} className="w-full p-2 bg-gray-50 rounded border border-gray-300" />
+                                <div className="flex items-center justify-between">
+                                    <label className={labelCls}>Tamamlanma</label>
+                                    <span className="text-[13px] font-medium text-slate-900 tabular-nums">%{formData.progress}</span>
+                                </div>
+                                <input type="range" name="progress" min="0" max="100" step="5" value={formData.progress} onChange={handleChange} className="w-full accent-blue-600 disabled:opacity-50" disabled={isSummary} />
                             </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className={labelCls}>Durum</label>
+                                    <select name="status" value={formData.status} onChange={handleChange} className={inputCls} disabled={isSummary}>
+                                        <option value="Not Started">Başlamadı</option>
+                                        <option value="In Progress">Devam ediyor</option>
+                                        <option value="Completed">Tamamlandı</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={labelCls}>Öncelik</label>
+                                    <select name="priority" value={formData.priority} onChange={handleChange} className={inputCls}>
+                                        <option value="Low">Düşük</option>
+                                        <option value="Medium">Orta</option>
+                                        <option value="High">Yüksek</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <details className="group rounded-lg border border-slate-200">
+                                <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-slate-700">Çalışma ve maliyet</summary>
+                                <div className="px-3 pb-3 pt-1 space-y-3">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className={labelCls}>Görev türü</label>
+                                            <select name="taskType" value={formData.taskType} onChange={handleChange} className={inputCls} disabled={isSummary || formData.isMilestone}>
+                                                {Object.values(TaskType).map(type => <option key={type} value={type}>{TYPE_LABEL[type] || type}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className={labelCls}>Çalışma (saat)</label>
+                                            <input type="number" name="work" min="0" step="0.1" value={formData.work} onChange={handleChange} className={inputCls} disabled={isSummary} />
+                                        </div>
+                                        <div>
+                                            <label className={labelCls}>Sabit maliyet</label>
+                                            <input type="number" name="fixedCost" value={formData.fixedCost} className={inputCls} readOnly disabled />
+                                            <p className="text-[11px] text-slate-400 mt-1">Proje künyesindeki bütçe bölümünden yönetilir.</p>
+                                        </div>
+                                        <div>
+                                            <label className={labelCls}>Gerçekleşen maliyet</label>
+                                            <input type="number" name="actualCost" min="0" step="0.01" value={formData.actualCost} onChange={handleChange} className={inputCls} />
+                                        </div>
+                                    </div>
+                                    <p className="text-[12px] text-slate-500 leading-relaxed">
+                                        <b className="text-slate-700">Sabit birim:</b> çalışma saatini girersiniz, süre atanan kaynaklara göre ayarlanır.{' '}
+                                        <b className="text-slate-700">Sabit süre:</b> süre sabittir, çalışma saati süreye ve kaynaklara göre hesaplanır.
+                                    </p>
+                                </div>
+                            </details>
+                            <details className="rounded-lg border border-slate-200" open={!!(formData.responsible || formData.remarks || formData.report)}>
+                                <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-slate-700">Rapor alanları (Excel PL130)</summary>
+                                <div className="px-3 pb-3 pt-1 grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className={labelCls}>Sorumlu</label>
+                                        <input type="text" name="responsible" value={formData.responsible ?? ''} onChange={handleChange} placeholder="ör. Sanifoam / Müşteri" className={inputCls} />
+                                    </div>
+                                    <label className="flex items-end gap-2 pb-2 text-[13px] text-slate-700">
+                                        <input type="checkbox" name="report" checked={!!formData.report} onChange={handleChange} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+                                        Kilometre taşı durum raporunda göster
+                                    </label>
+                                    <div className="col-span-2">
+                                        <label className={labelCls}>Açıklama</label>
+                                        <input type="text" name="remarks" value={formData.remarks ?? ''} onChange={handleChange} className={inputCls} />
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     )}
                     {activeTab === 'dependencies' && (
-                         <div className="space-y-4">
-                            <label className="block text-sm font-medium">Predecessors</label>
-                            <div className="space-y-2">
-                                {formData.dependencies.map((dep, index) => (
-                                    <div key={index} className="grid grid-cols-[1fr_auto_80px_auto] gap-2 items-center">
-                                        <select value={dep.predecessorId} onChange={(e) => handleDependencyChange(index, 'predecessorId', e.target.value)} className="w-full p-2 bg-gray-50 rounded border border-gray-300">
-                                            {otherTasks.map(t => <option key={t.id} value={t.id}>{t.wbs} {t.name}</option>)}
-                                        </select>
-                                        <select value={dep.type} onChange={(e) => handleDependencyChange(index, 'type', e.target.value)} className="p-2 bg-gray-50 rounded border border-gray-300">
-                                            {Object.values(DependencyType).map(type => <option key={type} value={type}>{type.split('-')[0].charAt(0) + type.split('-')[2].charAt(0)}</option>)}
-                                        </select>
-                                        <div className="relative"><input type="number" value={dep.lag} onChange={(e) => handleDependencyChange(index, 'lag', e.target.value)} className="w-full p-2 bg-gray-50 rounded border border-gray-300 pr-8" placeholder="Lag" /><span className="absolute right-2 top-2 text-gray-400 text-sm">d</span></div>
-                                        <button type="button" onClick={() => removeDependency(index)} className="p-2 text-red-500 hover:text-red-700 hover:bg-red-100 rounded"><DeleteIcon /></button>
+                        <div className="space-y-3">
+                            <p className="text-[13px] text-slate-500">Bu görev, aşağıdaki görevlere bağlıdır. Gecikme negatif girilirse öne çekme (lead) olur.</p>
+                            {formData.dependencies.length > 0 && (
+                                <div className="grid grid-cols-[1fr_200px_90px_36px] gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                    <span>Öncül görev</span><span>Bağ türü</span><span>Gecikme</span><span />
+                                </div>
+                            )}
+                            {formData.dependencies.map((dep, index) => (
+                                <div key={index} className="grid grid-cols-[1fr_200px_90px_36px] gap-2 items-center">
+                                    <select value={dep.predecessorId} onChange={(e) => handleDependencyChange(index, 'predecessorId', e.target.value)} className={inputCls}>
+                                        {otherTasks.map(t => <option key={t.id} value={t.id}>{t.wbs} {t.name}</option>)}
+                                    </select>
+                                    <select value={dep.type} onChange={(e) => handleDependencyChange(index, 'type', e.target.value)} className={inputCls}>
+                                        {Object.values(DependencyType).map(type => <option key={type} value={type}>{DEP_LABEL[type]}</option>)}
+                                    </select>
+                                    <div className="relative"><input type="number" value={dep.lag} onChange={(e) => handleDependencyChange(index, 'lag', e.target.value)} className={`${inputCls} pr-7`} /><span className="absolute right-2.5 top-2 text-slate-400 text-[13px]">g</span></div>
+                                    <button type="button" onClick={() => removeDependency(index)} className="h-9 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-md" title="Kaldır"><DeleteIcon /></button>
+                                </div>
+                            ))}
+                            <button type="button" onClick={addDependency} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-blue-700 hover:bg-blue-50"><AddIcon /><span>Öncül ekle</span></button>
+                        </div>
+                    )}
+                    {activeTab === 'resources' && (
+                        <div className="space-y-3">
+                            {formData.resourceAssignments.length > 0 && (
+                                <div className="grid grid-cols-[1fr_160px_36px] gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                    <span>Kaynak</span><span>Birim / miktar</span><span />
+                                </div>
+                            )}
+                            {formData.resourceAssignments.map((assignment, index) => {
+                                const resource = resourceMap.get(assignment.resourceId);
+                                if (!resource) return null;
+                                return (
+                                    <div key={index} className="grid grid-cols-[1fr_160px_36px] gap-2 items-center">
+                                        <div className="truncate text-[14px]" title={resource.name}>{resource.name} <span className="text-[12px] text-slate-400">({RES_TYPE[resource.type] || resource.type})</span></div>
+                                        <div>{renderResourceValueInput(assignment, index)}</div>
+                                        <button type="button" onClick={() => removeResourceAssignment(index)} className="h-9 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-md" title="Kaldır"><DeleteIcon /></button>
                                     </div>
-                                ))}
-                            </div>
-                            <button type="button" onClick={addDependency} className="mt-2 flex items-center space-x-2 text-blue-600 hover:text-blue-800"><AddIcon /><span>Add Dependency</span></button>
+                                );
+                            })}
+                            <select onChange={e => addResourceAssignment(e.target.value)} value="" className={inputCls}>
+                                <option value="" disabled>{availableResources.length ? 'Kaynak ekle…' : 'Eklenecek kaynak yok (Kaynaklar sayfasından tanımlayın)'}</option>
+                                {availableResources.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                            </select>
                         </div>
                     )}
-                     {activeTab === 'resources' && (
-                        <div className="space-y-4">
-                             <label className="block text-sm font-medium">Resource Assignments</label>
-                             <div className="grid grid-cols-[2fr_1fr_auto] gap-x-4 gap-y-2 items-center p-2 font-bold bg-gray-100 sticky top-0 z-10 text-gray-600">
-                                <div>Resource Name</div>
-                                <div className="text-left">Value</div>
-                                <div></div>
-                             </div>
-                             <div className="space-y-2">
-                                {formData.resourceAssignments.map((assignment, index) => {
-                                    const resource = resourceMap.get(assignment.resourceId);
-                                    if (!resource) return null;
-                                    return (
-                                        <div key={index} className="grid grid-cols-[2fr_1fr_auto] gap-x-4 items-center">
-                                            <div className="truncate" title={resource.name}>{resource.name} ({resource.type})</div>
-                                            <div>{renderResourceValueInput(assignment, index)}</div>
-                                            <button type="button" onClick={() => removeResourceAssignment(index)} className="p-2 text-red-500 hover:text-red-700 hover:bg-red-100 rounded"><DeleteIcon /></button>
-                                        </div>
-                                    )
-                                })}
-                             </div>
-                              <div className="mt-4 flex items-center gap-2">
-                                 <select 
-                                    onChange={e => addResourceAssignment(e.target.value)}
-                                    value=""
-                                    className="w-full p-2 bg-gray-50 rounded border border-gray-300"
-                                >
-                                    <option value="" disabled>Add a resource...</option>
-                                    {availableResources.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                                </select>
-                            </div>
-                        </div>
-                    )}
-
+                    <button type="submit" className="hidden" />
                 </form>
-                <div className="flex justify-end space-x-2 pt-4 mt-4 border-t border-gray-200 flex-shrink-0">
-                    <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">Cancel</button>
-                    <button type="button" onClick={handleSubmit} className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700 text-white">Save</button>
+                <div className="flex justify-end gap-2 px-6 py-3.5 border-t border-slate-100 bg-slate-50/60 rounded-b-xl flex-shrink-0">
+                    <button type="button" onClick={onClose} className="h-9 px-4 rounded-md border border-slate-300 bg-white text-[14px] text-slate-700 hover:bg-slate-50">Vazgeç</button>
+                    <button type="button" onClick={handleSubmit} className="h-9 px-4 rounded-md bg-blue-600 text-[14px] font-medium text-white hover:bg-blue-700">Kaydet</button>
                 </div>
             </div>
         </div>

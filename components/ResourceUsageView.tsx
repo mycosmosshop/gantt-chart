@@ -3,7 +3,7 @@ import { ProcessedTask, ProjectResource, ViewMode, CalendarSettings, ResourceTyp
 import { getResourceAllocationState, isWorkingDay } from '../services/ganttService';
 import { WarningIcon } from './Icons';
 
-declare const d3: any;
+import * as d3 from 'd3';
 
 interface ResourceUsageViewProps {
     tasks: ProcessedTask[];

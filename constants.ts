@@ -6,13 +6,13 @@ export const THEMES: GanttTheme[] = [
         name: 'Classic Blue',
         type: 'solid',
         colors: {
-            notStarted: '#9ca3af',
-            inProgress: '#3b82f6',
-            completed: '#22c55e',
+            notStarted: '#3b82f6',
+            inProgress: '#2563eb',
+            completed: '#10b981',
             criticalPath: '#ef4444',
-            summary: '#6366f1',
-            milestone: '#6366f1',
-            milestoneCritical: '#ef4444',
+            summary: '#334155',
+            milestone: '#4f46e5',
+            milestoneCritical: '#dc2626',
         }
     },
     {
@@ -272,27 +272,39 @@ export const BLANK_PROJECT: Omit<Project, 'id'> = {
 };
 
 
-export const COLUMNS_CONFIG = [
-    { id: 'statusIndicator', label: '', defaultWidth: '24px', isVisible: true },
-    { id: 'taskName', label: 'Görev Adı', defaultWidth: 'minmax(250px, 1fr)', isVisible: true },
-    { id: 'start', label: 'Başlangıç', defaultWidth: '90px', isVisible: true, isRight: true },
-    { id: 'end', label: 'Bitiş', defaultWidth: '90px', isVisible: true, isRight: true },
-    { id: 'baselineStart', label: 'Temel Başl.', defaultWidth: '90px', isVisible: false, isRight: true },
-    { id: 'baselineEnd', label: 'Temel Bitiş', defaultWidth: '90px', isVisible: false, isRight: true },
-    { id: 'startVariance', label: 'Başl. Sapma', defaultWidth: '80px', isVisible: false, isRight: true, title: 'Başlangıç Sapması (gün)' },
-    { id: 'finishVariance', label: 'Bitiş Sapma', defaultWidth: '80px', isVisible: false, isRight: true, title: 'Bitiş Sapması (gün)' },
-    { id: 'duration', label: 'Süre', defaultWidth: '80px', isVisible: true, isRight: true },
-    { id: 'progress', label: 'İlerleme', defaultWidth: '80px', isVisible: true, isRight: true, title: 'Tamamlanma Yüzdesi (%)' },
-    { id: 'work', label: 'Çalışma', defaultWidth: '80px', isVisible: true, isRight: true },
-    { id: 'cost', label: 'Maliyet', defaultWidth: '100px', isVisible: true, isRight: true },
-    { id: 'actualCost', label: 'Gerçek Maliyet', defaultWidth: '100px', isVisible: true, isRight: true, title: 'Gerçekleşen İşin Maliyeti (ACWP)' },
-    { id: 'plannedValue', label: 'PV', defaultWidth: '100px', isVisible: false, isRight: true, title: 'Planlanan Değer (BCWS)' },
-    { id: 'earnedValue', label: 'EV', defaultWidth: '100px', isVisible: false, isRight: true, title: 'Kazanılmış Değer (BCWP)' },
-    { id: 'scheduleVariance', label: 'SV', defaultWidth: '100px', isVisible: true, isRight: true, title: 'Zamanlama Sapması (EV - PV)' },
-    { id: 'schedulePerformanceIndex', label: 'SPI', defaultWidth: '80px', isVisible: true, isRight: true, title: 'Zamanlama Performans Endeksi (EV / PV)' },
-    { id: 'costVariance', label: 'CV', defaultWidth: '100px', isVisible: false, isRight: true, title: 'Maliyet Sapması (EV - AC)' },
-    { id: 'costPerformanceIndex', label: 'CPI', defaultWidth: '80px', isVisible: false, isRight: true, title: 'Maliyet Performans Endeksi (EV / AC)' },
-    { id: 'actions', label: '', defaultWidth: '130px', isVisible: true },
+export interface ColumnConfig {
+    id: string;
+    label: string;
+    defaultWidth: string;
+    isVisible: boolean;
+    isRight?: boolean;
+    title?: string;
+    fixed?: boolean; // gizlenemez
+}
+
+export const COLUMNS_CONFIG: ColumnConfig[] = [
+    { id: 'rowNumber', label: '#', defaultWidth: '40px', isVisible: true, isRight: true, title: 'Satır numarası (öncül girerken bu numara kullanılır)', fixed: true },
+    { id: 'statusIndicator', label: '', defaultWidth: '28px', isVisible: true, title: 'Göstergeler' },
+    { id: 'taskName', label: 'Görev Adı', defaultWidth: 'minmax(220px, 1fr)', isVisible: true, fixed: true },
+    { id: 'duration', label: 'Süre', defaultWidth: '64px', isVisible: true, isRight: true, title: 'İş günü' },
+    { id: 'start', label: 'Başlangıç', defaultWidth: '96px', isVisible: true, isRight: true },
+    { id: 'end', label: 'Bitiş', defaultWidth: '96px', isVisible: true, isRight: true },
+    { id: 'predecessors', label: 'Öncüller', defaultWidth: '84px', isVisible: true, title: 'Ör. 3; 5BB+2 (BS: Bitiş-Başlangıç, BB: Başlangıç-Başlangıç, BiBi: Bitiş-Bitiş, BaBi: Başlangıç-Bitiş)' },
+    { id: 'resources', label: 'Kaynaklar', defaultWidth: '120px', isVisible: true },
+    { id: 'progress', label: 'Tamamlanma', defaultWidth: '96px', isVisible: true, title: 'Tamamlanma yüzdesi' },
+    { id: 'baselineStart', label: 'Temel Başl.', defaultWidth: '96px', isVisible: false, isRight: true },
+    { id: 'baselineEnd', label: 'Temel Bitiş', defaultWidth: '96px', isVisible: false, isRight: true },
+    { id: 'startVariance', label: 'Başl. Sapma', defaultWidth: '80px', isVisible: false, isRight: true, title: 'Başlangıç sapması (gün)' },
+    { id: 'finishVariance', label: 'Bitiş Sapma', defaultWidth: '80px', isVisible: false, isRight: true, title: 'Bitiş sapması (gün)' },
+    { id: 'work', label: 'Çalışma', defaultWidth: '72px', isVisible: false, isRight: true, title: 'Saat' },
+    { id: 'cost', label: 'Maliyet', defaultWidth: '100px', isVisible: false, isRight: true },
+    { id: 'actualCost', label: 'Gerçek Maliyet', defaultWidth: '108px', isVisible: false, isRight: true, title: 'Gerçekleşen işin maliyeti (ACWP)' },
+    { id: 'plannedValue', label: 'PV', defaultWidth: '96px', isVisible: false, isRight: true, title: 'Planlanan değer (BCWS)' },
+    { id: 'earnedValue', label: 'EV', defaultWidth: '96px', isVisible: false, isRight: true, title: 'Kazanılmış değer (BCWP)' },
+    { id: 'scheduleVariance', label: 'SV', defaultWidth: '96px', isVisible: false, isRight: true, title: 'Zamanlama sapması (EV − PV)' },
+    { id: 'schedulePerformanceIndex', label: 'SPI', defaultWidth: '60px', isVisible: false, isRight: true, title: 'Zamanlama performans endeksi (EV / PV)' },
+    { id: 'costVariance', label: 'CV', defaultWidth: '96px', isVisible: false, isRight: true, title: 'Maliyet sapması (EV − AC)' },
+    { id: 'costPerformanceIndex', label: 'CPI', defaultWidth: '60px', isVisible: false, isRight: true, title: 'Maliyet performans endeksi (EV / AC)' },
 ];
 
 export const DEFAULT_COLUMN_VISIBILITY = COLUMNS_CONFIG.reduce((acc, col) => {

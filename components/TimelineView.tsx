@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import { ProcessedTask, ViewMode, CalendarSettings, Milestone } from '../types';
 
-declare const d3: any;
+import * as d3 from 'd3';
 
 interface TimelineViewProps {
     tasks: ProcessedTask[];
